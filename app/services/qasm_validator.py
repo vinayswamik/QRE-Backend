@@ -1,8 +1,11 @@
+import json
 import logging
 from collections import Counter
+from pathlib import Path
 
 import pyqasm
 from openqasm3.ast import QuantumGate, QuantumPhase
+from pyqasm.exceptions import QASM3ParsingError, QasmParsingError, ValidationError
 
 from app.models.qasm import (
     GateCategoryBreakdown,
@@ -15,67 +18,11 @@ from app.models.qasm import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Vendor hardware specs (sourced from vendors/hardware_data JSON files)
+# Vendor hardware specs — loaded from app/core/vendors.json
 # ---------------------------------------------------------------------------
 
-_VENDOR_SPECS = [
-    {
-        "name": "Google",
-        "qubits_per_logical": 101,
-        "gates_per_logical": 314,
-        # Gate fidelities (1 - error_rate)
-        "fidelity_1q": 0.9990,
-        "fidelity_2q": 0.9950,
-        # Gate times in seconds
-        "gate_time_1q": 15e-9,
-        "gate_time_2q": 30e-9,
-    },
-    {
-        "name": "IBM",
-        "qubits_per_logical": 127,
-        "gates_per_logical": 2500,
-        "fidelity_1q": 0.99981,
-        "fidelity_2q": 0.9971,
-        "gate_time_1q": 35e-9,
-        "gate_time_2q": 68e-9,
-    },
-    {
-        "name": "IonQ",
-        "qubits_per_logical": 64,
-        "gates_per_logical": 1200,
-        "fidelity_1q": 0.9997,
-        "fidelity_2q": 0.9967,
-        "gate_time_1q": 10e-6,
-        "gate_time_2q": 200e-6,
-    },
-    {
-        "name": "Quantinuum",
-        "qubits_per_logical": 32,
-        "gates_per_logical": 800,
-        "fidelity_1q": 0.99997,
-        "fidelity_2q": 0.9993,
-        "gate_time_1q": 10e-6,
-        "gate_time_2q": 200e-6,
-    },
-    {
-        "name": "Rigetti",
-        "qubits_per_logical": 84,
-        "gates_per_logical": 1600,
-        "fidelity_1q": 0.9950,
-        "fidelity_2q": 0.9700,
-        "gate_time_1q": 40e-9,
-        "gate_time_2q": 80e-9,
-    },
-    {
-        "name": "Atom Computing",
-        "qubits_per_logical": 100,
-        "gates_per_logical": 2000,
-        "fidelity_1q": 0.9990,
-        "fidelity_2q": 0.9950,
-        "gate_time_1q": 1e-6,
-        "gate_time_2q": 500e-6,
-    },
-]
+_VENDORS_PATH = Path(__file__).parent.parent / "core" / "vendors.json"
+_VENDOR_SPECS: list[dict] = json.loads(_VENDORS_PATH.read_text())
 
 def _classify_gate(num_qubits: int) -> str:
     """Classify a gate by its qubit arity: 1Q, 2Q, or Toffoli (3+)."""
@@ -159,7 +106,7 @@ def validate_qasm(code: str) -> QasmValidateResponse:
         module.validate()
         logger.debug("QASM validation succeeded")
         return QasmValidateResponse(valid=True, message="QASM code is valid")
-    except Exception as exc:
+    except (ValidationError, QASM3ParsingError, QasmParsingError, TypeError, ValueError) as exc:
         error_type = type(exc).__name__
         message = str(exc) or f"Validation failed ({error_type})"
         logger.debug("QASM validation failed: %s – %s", error_type, message)

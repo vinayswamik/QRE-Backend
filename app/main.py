@@ -32,7 +32,3 @@ app.include_router(api_router)
 @app.get("/health", tags=["meta"])
 def health_check() -> dict:
     return {"status": "ok", "version": settings.APP_VERSION}
-
-
-from mangum import Mangum
-handler = Mangum(app)
