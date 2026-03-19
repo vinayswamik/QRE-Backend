@@ -1,0 +1,17 @@
+# Environment & secrets
+.env
+
+# Lambda build artifacts
+package/
+lambda.zip
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
