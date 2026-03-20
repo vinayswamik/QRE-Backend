@@ -10,8 +10,11 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+qre-env/
 *.egg-info/
 .pytest_cache/
+
+GNUmakefile
 
 # OS
 .DS_Store
