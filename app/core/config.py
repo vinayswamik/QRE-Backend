@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     # CORS – include both hostname forms so Chrome works regardless of whether
     # the user opens localhost or 127.0.0.1, and include the Vite preview port.
     CORS_ORIGINS: list[str] = [
+        "https://qre.pages.dev",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:4173",

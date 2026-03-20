@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'app/**'
+      - 'handler.py'
+      - 'requirements.txt'
 
 jobs:
   test:
