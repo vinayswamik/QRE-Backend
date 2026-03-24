@@ -10,10 +10,12 @@ from pyqasm.exceptions import QASM3ParsingError, QasmParsingError, ValidationErr
 from app.models.qasm import (
     GateCategoryBreakdown,
     GateDetail,
+    GoogleResourceDetail,
     QasmAnalyzeResponse,
     QasmValidateResponse,
     VendorResourceEstimate,
 )
+from app.services.google_estimator import estimate_google_resources
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +63,8 @@ def _parse_gate_counts(code: str) -> tuple[int, Counter, dict[str, int]]:
 
 def _build_gate_breakdown(
     gate_counter: Counter, gate_qubit_map: dict[str, int]
-) -> tuple[list[GateCategoryBreakdown], int, int]:
-    """Return (gate_breakdown, n_1q, n_2q) for use in resource estimates."""
+) -> tuple[list[GateCategoryBreakdown], int, int, int, int]:
+    """Return (gate_breakdown, n_1q, n_2q, n_toffoli, n_t)."""
     categories: dict[str, Counter] = {"1Q": Counter(), "2Q": Counter(), "Toffoli": Counter()}
     for gate, count in gate_counter.items():
         num_qubits = gate_qubit_map.get(gate, 1)
@@ -89,9 +91,11 @@ def _build_gate_breakdown(
         ))
 
     n_1q = sum(categories["1Q"].values())
-    # Toffoli decomposes into ~6 CNOTs; approximate as 2Q for fidelity/runtime
-    n_2q = sum(categories["2Q"].values()) + sum(categories["Toffoli"].values())
-    return breakdown, n_1q, n_2q
+    n_2q = sum(categories["2Q"].values())
+    n_toffoli = sum(categories["Toffoli"].values())
+    # T / T† gates counted from 1Q category for magic state estimation
+    n_t = categories["1Q"].get("t", 0) + categories["1Q"].get("tdg", 0)
+    return breakdown, n_1q, n_2q, n_toffoli, n_t
 
 
 def validate_qasm(code: str) -> QasmValidateResponse:
@@ -121,29 +125,76 @@ def analyze_qasm(code: str) -> QasmAnalyzeResponse:
     """
     circuit_qubits, gate_counter, gate_qubit_map = _parse_gate_counts(code)
     circuit_gates = sum(gate_counter.values()) or 1
-    gate_breakdown, n_1q, n_2q = _build_gate_breakdown(gate_counter, gate_qubit_map)
-    logger.debug("QASM analysis: %d qubits, %d gates (%d 1Q, %d 2Q)", circuit_qubits, circuit_gates, n_1q, n_2q)
+    gate_breakdown, n_1q, n_2q, n_toffoli, n_t = _build_gate_breakdown(
+        gate_counter, gate_qubit_map
+    )
+    # For non-surface-code vendors, Toffoli gates are approximated as 2Q
+    n_2q_with_toffoli = n_2q + n_toffoli
+    logger.debug(
+        "QASM analysis: %d qubits, %d gates (%d 1Q, %d 2Q, %d Toffoli, %d T/Tdg)",
+        circuit_qubits, circuit_gates, n_1q, n_2q, n_toffoli, n_t,
+    )
 
     vendors = []
     for v in _VENDOR_SPECS:
-        physical_qubits = circuit_qubits * v["qubits_per_logical"]
-        physical_gates = circuit_gates * v["gates_per_logical"]
+        if v.get("estimation_model") == "surface_code":
+            # Google Willow: surface-code resource estimation
+            result = estimate_google_resources(
+                n_logical=circuit_qubits,
+                n_t=n_t,
+                n_toffoli=n_toffoli,
+            )
+            # Success probability using Willow fidelities
+            success_prob = (
+                (v["fidelity_1q"] ** n_1q)
+                * (v["fidelity_2q"] ** n_2q_with_toffoli)
+                * 100.0
+            )
+            success_prob = max(0.0, min(100.0, round(success_prob, 4)))
 
-        # Success probability: product of per-gate fidelities
-        success_prob = (v["fidelity_1q"] ** n_1q) * (v["fidelity_2q"] ** n_2q) * 100.0
-        success_prob = max(0.0, min(100.0, round(success_prob, 4)))
+            # Runtime: sequential gate times (lower bound)
+            runtime_s = n_1q * v["gate_time_1q"] + n_2q_with_toffoli * v["gate_time_2q"]
+            runtime_s = round(runtime_s, 6)
 
-        # Runtime estimate: sequential gate times (lower bound)
-        runtime_s = n_1q * v["gate_time_1q"] + n_2q * v["gate_time_2q"]
-        runtime_s = round(runtime_s, 6)
+            vendors.append(VendorResourceEstimate(
+                name=v["name"],
+                physical_qubits=result["physical_qubits"],
+                physical_gates=circuit_gates,
+                success_probability=success_prob,
+                runtime_seconds=runtime_s,
+                detail=GoogleResourceDetail(
+                    code_distance=result["code_distance"],
+                    logical_error_rate=result["logical_error_rate"],
+                    num_t_gates=result["num_t_gates"],
+                    num_factories=result["num_factories"],
+                    data_qubits=result["data_qubits"],
+                    distillation_qubits=result["distillation_qubits"],
+                ),
+            ))
+        else:
+            # Flat-multiplier estimation for other vendors
+            physical_qubits = circuit_qubits * v["qubits_per_logical"]
+            physical_gates = circuit_gates * v["gates_per_logical"]
 
-        vendors.append(VendorResourceEstimate(
-            name=v["name"],
-            physical_qubits=physical_qubits,
-            physical_gates=physical_gates,
-            success_probability=success_prob,
-            runtime_seconds=runtime_s,
-        ))
+            success_prob = (
+                (v["fidelity_1q"] ** n_1q)
+                * (v["fidelity_2q"] ** n_2q_with_toffoli)
+                * 100.0
+            )
+            success_prob = max(0.0, min(100.0, round(success_prob, 4)))
+
+            runtime_s = (
+                n_1q * v["gate_time_1q"] + n_2q_with_toffoli * v["gate_time_2q"]
+            )
+            runtime_s = round(runtime_s, 6)
+
+            vendors.append(VendorResourceEstimate(
+                name=v["name"],
+                physical_qubits=physical_qubits,
+                physical_gates=physical_gates,
+                success_probability=success_prob,
+                runtime_seconds=runtime_s,
+            ))
 
     return QasmAnalyzeResponse(
         circuit_qubits=circuit_qubits,

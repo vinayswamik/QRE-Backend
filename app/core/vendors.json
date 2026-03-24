@@ -1,12 +1,17 @@
 [
   {
     "name": "Google",
-    "qubits_per_logical": 101,
-    "gates_per_logical": 314,
-    "fidelity_1q": 0.999,
-    "fidelity_2q": 0.995,
-    "gate_time_1q": 1.5e-8,
-    "gate_time_2q": 3.0e-8
+    "chip": "Willow",
+    "estimation_model": "surface_code",
+    "physical_error_1q": 3.5e-4,
+    "physical_error_2q": 3.3e-3,
+    "measurement_error": 7.7e-3,
+    "lambda_suppression": 2.14,
+    "cycle_time_seconds": 1.1e-6,
+    "fidelity_1q": 0.99965,
+    "fidelity_2q": 0.9967,
+    "gate_time_1q": 2.5e-8,
+    "gate_time_2q": 3.4e-8
   },
   {
     "name": "IBM",

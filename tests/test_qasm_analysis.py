@@ -481,3 +481,18 @@ class TestQasmAnalysis:
             assert v["physical_gates"] > 0
             assert 0.0 <= v["success_probability"] <= 100.0
             assert v["runtime_seconds"] >= 0.0
+
+            if v["name"] == "Google":
+                # Surface-code estimation includes a detail breakdown
+                detail = v["detail"]
+                assert detail is not None
+                assert detail["code_distance"] == 7
+                assert detail["code_distance"] % 2 == 1
+                assert detail["logical_error_rate"] > 0
+                assert detail["num_t_gates"] >= 0
+                assert detail["num_factories"] >= 0
+                assert detail["data_qubits"] > 0
+                assert detail["distillation_qubits"] >= 0
+                assert v["physical_qubits"] == detail["data_qubits"] + detail["distillation_qubits"]
+            else:
+                assert v.get("detail") is None
