@@ -9,13 +9,23 @@ from pyqasm.exceptions import QASM3ParsingError, QasmParsingError, ValidationErr
 
 from app.models.qasm import (
     GateCategoryBreakdown,
+    GateDecompositionEntry,
     GateDetail,
-    GoogleResourceDetail,
     QasmAnalyzeResponse,
     QasmValidateResponse,
+    Reference,
+    ResourceDetail,
     VendorResourceEstimate,
 )
+from app.services.gate_decomposer import decompose_for_vendor, get_native_2q_gate
+from app.services.atom_estimator import estimate_atom_resources
 from app.services.google_estimator import estimate_google_resources
+from app.services.ibm_estimator import estimate_ibm_resources
+from app.services.ionq_estimator import estimate_ionq_resources
+from app.services.quantinuum_estimator import estimate_quantinuum_resources
+from app.services.quandela_estimator import estimate_quandela_resources
+from app.services.quera_estimator import estimate_quera_resources
+from app.services.rigetti_estimator import estimate_rigetti_resources
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +45,9 @@ def _classify_gate(num_qubits: int) -> str:
     return "1Q"
 
 
-def _parse_gate_counts(code: str) -> tuple[int, Counter, dict[str, int]]:
+def _parse_gate_counts(code: str) -> tuple[int, Counter, dict[str, int], int]:
     """
-    Return (logical_qubit_count, gate_counter, gate_qubit_map).
+    Return (logical_qubit_count, gate_counter, gate_qubit_map, circuit_depth).
     gate_qubit_map maps gate name → number of qubits it acts on.
     """
     module = pyqasm.loads(code)
@@ -47,6 +57,14 @@ def _parse_gate_counts(code: str) -> tuple[int, Counter, dict[str, int]]:
     module.remove_includes()
 
     total_qubits = max(module.num_qubits, 1)
+    try:
+        circuit_depth = module.depth()
+    except Exception:
+        # Fallback when depth() fails (e.g. some QASM 2.0 constructs like rzz)
+        circuit_depth = sum(
+            1 for stmt in module.unrolled_ast.statements
+            if isinstance(stmt, (QuantumGate, QuantumPhase))
+        )
     gate_counter: Counter = Counter()
     gate_qubit_map: dict[str, int] = {}
     for stmt in module.unrolled_ast.statements:
@@ -58,7 +76,7 @@ def _parse_gate_counts(code: str) -> tuple[int, Counter, dict[str, int]]:
             gate_counter["gphase"] += 1
             gate_qubit_map["gphase"] = len(stmt.qubits)
 
-    return total_qubits, gate_counter, gate_qubit_map
+    return total_qubits, gate_counter, gate_qubit_map, circuit_depth
 
 
 def _build_gate_breakdown(
@@ -123,82 +141,122 @@ def analyze_qasm(code: str) -> QasmAnalyzeResponse:
 
     Assumes the circuit is already valid (call validate_qasm first).
     """
-    circuit_qubits, gate_counter, gate_qubit_map = _parse_gate_counts(code)
+    circuit_qubits, gate_counter, gate_qubit_map, circuit_depth = _parse_gate_counts(code)
     circuit_gates = sum(gate_counter.values()) or 1
     gate_breakdown, n_1q, n_2q, n_toffoli, n_t = _build_gate_breakdown(
         gate_counter, gate_qubit_map
     )
-    # For non-surface-code vendors, Toffoli gates are approximated as 2Q
-    n_2q_with_toffoli = n_2q + n_toffoli
     logger.debug(
-        "QASM analysis: %d qubits, %d gates (%d 1Q, %d 2Q, %d Toffoli, %d T/Tdg)",
-        circuit_qubits, circuit_gates, n_1q, n_2q, n_toffoli, n_t,
+        "QASM analysis: %d qubits, %d gates (%d 1Q, %d 2Q, %d Toffoli, %d T/Tdg), depth %d",
+        circuit_qubits, circuit_gates, n_1q, n_2q, n_toffoli, n_t, circuit_depth,
     )
+
+    # Estimator dispatch map: estimation_model -> estimator function
+    _estimator_map = {
+        "surface_code": estimate_google_resources,
+        "bb_code": estimate_ibm_resources,
+        "bb5_code": estimate_ionq_resources,
+        "color_code": estimate_quantinuum_resources,
+        "surface_code_rigetti": estimate_rigetti_resources,
+        "geometric_4d": estimate_atom_resources,
+        "surface_code_quera": estimate_quera_resources,
+        "honeycomb_floquet": estimate_quandela_resources,
+    }
 
     vendors = []
     for v in _VENDOR_SPECS:
-        if v.get("estimation_model") == "surface_code":
-            # Google Willow: surface-code resource estimation
-            result = estimate_google_resources(
+        estimation_model = v.get("estimation_model")
+        estimator_fn = _estimator_map.get(estimation_model)
+
+        # Native gate decomposition for this vendor
+        decomp = decompose_for_vendor(v["name"], gate_counter, gate_qubit_map)
+
+        # Success probability: f_1q^native_1q × f_2q^native_2q × f_readout^n_qubits
+        success_prob = (
+            (v["fidelity_1q"] ** decomp.native_1q)
+            * (v["fidelity_2q"] ** decomp.native_2q)
+            * (v["fidelity_readout"] ** circuit_qubits)
+            * 100.0
+        )
+        success_prob = max(0.0, min(100.0, round(success_prob, 4)))
+
+        # Runtime: circuit_depth × gate_time_2q (depth-based, accounts for parallelism)
+        runtime_s = round(circuit_depth * v["gate_time_2q"], 12)
+
+        # Gate decomposition breakdown for frontend modal
+        gate_decomp_entries = [
+            GateDecompositionEntry(
+                gate=g.gate, count=g.count, native_1q=g.native_1q, native_2q=g.native_2q
+            )
+            for g in decomp.per_gate
+        ]
+
+        if estimator_fn is not None:
+            # QEC-based resource estimation
+            result = estimator_fn(
                 n_logical=circuit_qubits,
                 n_t=n_t,
                 n_toffoli=n_toffoli,
             )
-            # Success probability using Willow fidelities
-            success_prob = (
-                (v["fidelity_1q"] ** n_1q)
-                * (v["fidelity_2q"] ** n_2q_with_toffoli)
-                * 100.0
-            )
-            success_prob = max(0.0, min(100.0, round(success_prob, 4)))
 
-            # Runtime: sequential gate times (lower bound)
-            runtime_s = n_1q * v["gate_time_1q"] + n_2q_with_toffoli * v["gate_time_2q"]
-            runtime_s = round(runtime_s, 6)
+            # Build references from estimator result
+            refs = [
+                Reference(key=r["key"], citation=r["citation"], url=r.get("url"))
+                for r in result.get("references", [])
+            ]
 
             vendors.append(VendorResourceEstimate(
                 name=v["name"],
                 physical_qubits=result["physical_qubits"],
-                physical_gates=circuit_gates,
+                physical_gates=decomp.total,
                 success_probability=success_prob,
                 runtime_seconds=runtime_s,
-                detail=GoogleResourceDetail(
+                native_1q_count=decomp.native_1q,
+                native_2q_count=decomp.native_2q,
+                native_2q_gate=get_native_2q_gate(v["name"]),
+                gate_decomposition=gate_decomp_entries,
+                fidelity_1q=v["fidelity_1q"],
+                fidelity_2q=v["fidelity_2q"],
+                fidelity_readout=v["fidelity_readout"],
+                gate_time_2q=v["gate_time_2q"],
+                detail=ResourceDetail(
+                    error_correction_code=result["error_correction_code"],
                     code_distance=result["code_distance"],
                     logical_error_rate=result["logical_error_rate"],
                     num_t_gates=result["num_t_gates"],
                     num_factories=result["num_factories"],
                     data_qubits=result["data_qubits"],
                     distillation_qubits=result["distillation_qubits"],
+                    physical_qubits_per_logical=result["physical_qubits_per_logical"],
+                    routing_overhead=result["routing_overhead"],
+                    factory_qubits_each=result["factory_qubits_each"],
+                    t_states_per_factory=result["t_states_per_factory"],
+                    references=refs,
                 ),
             ))
         else:
-            # Flat-multiplier estimation for other vendors
+            # Fallback flat-multiplier estimation (no QEC detail)
             physical_qubits = circuit_qubits * v["qubits_per_logical"]
-            physical_gates = circuit_gates * v["gates_per_logical"]
-
-            success_prob = (
-                (v["fidelity_1q"] ** n_1q)
-                * (v["fidelity_2q"] ** n_2q_with_toffoli)
-                * 100.0
-            )
-            success_prob = max(0.0, min(100.0, round(success_prob, 4)))
-
-            runtime_s = (
-                n_1q * v["gate_time_1q"] + n_2q_with_toffoli * v["gate_time_2q"]
-            )
-            runtime_s = round(runtime_s, 6)
-
             vendors.append(VendorResourceEstimate(
                 name=v["name"],
                 physical_qubits=physical_qubits,
-                physical_gates=physical_gates,
+                physical_gates=decomp.total,
                 success_probability=success_prob,
                 runtime_seconds=runtime_s,
+                native_1q_count=decomp.native_1q,
+                native_2q_count=decomp.native_2q,
+                native_2q_gate=get_native_2q_gate(v["name"]),
+                gate_decomposition=gate_decomp_entries,
+                fidelity_1q=v["fidelity_1q"],
+                fidelity_2q=v["fidelity_2q"],
+                fidelity_readout=v["fidelity_readout"],
+                gate_time_2q=v["gate_time_2q"],
             ))
 
     return QasmAnalyzeResponse(
         circuit_qubits=circuit_qubits,
         circuit_gates=circuit_gates,
+        circuit_depth=circuit_depth,
         gate_breakdown=gate_breakdown,
         vendors=vendors,
     )

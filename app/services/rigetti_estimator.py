@@ -1,25 +1,24 @@
 """
-Google Willow — Surface Code Physical Qubit Estimation
+Rigetti Ankaa-3 — Surface Code Physical Qubit Estimation
 
 Estimates the number of physical qubits required to run a quantum circuit
-on Google's Willow processor using the rotated surface code at code distance d=7.
+on Rigetti's Ankaa-3 processor using the rotated surface code at code
+distance d=3.
 
 Methodology:
-  1. Data qubits: Each logical qubit requires 2d²−1 = 97 physical qubits
-     (d² data + d²−1 ancilla) in the rotated surface code.
-  2. Routing overhead: Lattice surgery for logical gates requires ~1.5× the
-     data qubit count (compact layout).
-  3. Magic state factories: T-gates cannot be executed transversally on surface
-     codes. Each T-gate consumes a magic state produced by a 15-to-1
-     distillation factory. Toffoli gates decompose into 7 T-gates each.
-
-Chip parameters are from the Willow spec sheet and Nature 2024 paper.
+  Same QEC framework as Google Willow (rotated surface code) but at d=3
+  (conservative) since Rigetti's 2Q error rate (~0.5%) is near the
+  surface code threshold.
+  1. Data qubits: 2d²−1 = 17 physical qubits per logical qubit.
+  2. Routing overhead: 1.5x for lattice surgery on the square lattice.
+  3. Magic state factories: 15-to-1 distillation, 11 tiles × 2d² = 198
+     physical qubits per factory. Toffoli → 7 T-gates each.
 
 References:
-  [1] Google Quantum AI, "Quantum error correction below the surface code
-      threshold," Nature 638, 920–926 (2025). arXiv:2408.13687
-  [2] Willow spec sheet:
-      quantumai.google/static/site-assets/downloads/willow-spec-sheet.pdf
+  [1] Sheridan et al. (Rigetti + Riverlane), "Real-time quantum error
+      correction on a low-latency quantum processor," arXiv:2410.05202 (2024).
+  [2] Rigetti, "Ankaa-3 System Launch" (Dec 2024).
+      investors.rigetti.com/news-releases/
   [3] Fowler et al., "Surface codes: Towards practical large-scale quantum
       computation," Phys. Rev. A 86, 032324 (2012). arXiv:1208.0928
   [4] Litinski, "A Game of Surface Codes," Quantum 3, 128 (2019).
@@ -31,40 +30,34 @@ References:
 import math
 
 # ---------------------------------------------------------------------------
-# Willow chip constants
+# Ankaa-3 / Surface Code constants
 # ---------------------------------------------------------------------------
 
-CODE_DISTANCE = 7
-"""Best experimentally demonstrated distance on Willow [1]."""
+CODE_DISTANCE = 3
+"""Conservative code distance for surface code on Ankaa-3 [1][3]."""
 
-PHYSICAL_QUBITS_PER_LOGICAL = 2 * CODE_DISTANCE**2 - 1  # 97
-"""Rotated surface code: d² data qubits + (d²−1) ancilla qubits [3]."""
+PHYSICAL_QUBITS_PER_LOGICAL = 2 * CODE_DISTANCE**2 - 1  # 17
+"""Rotated surface code: d² data + (d²−1) ancilla qubits [3]."""
 
 ROUTING_OVERHEAD = 1.5
-"""Compact lattice-surgery routing factor [4]."""
+"""Compact lattice-surgery routing factor for square lattice [4]."""
 
-LOGICAL_ERROR_PER_CYCLE = 0.00143
-"""Measured logical error rate per surface-code cycle at d=7 [1]."""
-
-LAMBDA = 2.14
-"""Error suppression factor (NN decoder) [1]."""
-
-CYCLE_TIME_S = 1.1e-6
-"""Surface code cycle time on Willow: 1.1 µs [1]."""
+LOGICAL_ERROR_PER_CYCLE = 7.5e-3
+"""Estimated logical error per cycle at d=3 with p_phys~0.5%.
+Computed via p_L ≈ 0.03 × (p_phys/p_threshold)^((d+1)/2) [3]."""
 
 # Magic state distillation (15-to-1 protocol) [5]
 FACTORY_TILES = 11
 """Number of surface-code tiles per magic state factory [5]."""
 
-FACTORY_QUBITS = FACTORY_TILES * 2 * CODE_DISTANCE**2  # 1078
+FACTORY_QUBITS = FACTORY_TILES * 2 * CODE_DISTANCE**2  # 198
 """Physical qubits per factory: 11 tiles × 2d² qubits/tile [4][5]."""
 
 T_GATES_PER_TOFFOLI = 7
 """A Toffoli gate decomposes into 7 T/T† gates in the Clifford+T basis."""
 
 T_STATES_PER_FACTORY = 100
-"""Approximate T-state throughput per factory over a typical algorithm run.
-Derived from factory production time of ~6d cycles per state [5]."""
+"""Approximate T-state throughput per factory over a typical algorithm run."""
 
 ERROR_CORRECTION_CODE = "Rotated Surface Code"
 """Human-readable name for the QEC code used."""
@@ -74,13 +67,13 @@ ERROR_CORRECTION_CODE = "Rotated Surface Code"
 # Public API
 # ---------------------------------------------------------------------------
 
-def estimate_google_resources(
+def estimate_rigetti_resources(
     n_logical: int,
     n_t: int,
     n_toffoli: int,
 ) -> dict:
     """
-    Estimate physical qubit requirements for Google Willow (surface code, d=7).
+    Estimate physical qubit requirements for Rigetti Ankaa-3 (surface code, d=3).
 
     Parameters
     ----------
@@ -94,13 +87,14 @@ def estimate_google_resources(
     Returns
     -------
     dict with keys:
-        physical_qubits    – total physical qubits required
-        data_qubits        – physical qubits for logical data + routing
-        distillation_qubits– physical qubits for magic state factories
-        code_distance      – surface code distance used (7)
-        logical_error_rate – logical error per cycle at this distance
-        num_t_gates        – total T-gate count (explicit + from Toffoli)
-        num_factories      – number of magic state distillation factories
+        physical_qubits     – total physical qubits required
+        data_qubits         – physical qubits for data + routing
+        distillation_qubits – physical qubits for magic state factories
+        code_distance       – surface code distance (3)
+        logical_error_rate  – logical error per cycle
+        num_t_gates         – total T-gate count (explicit + from Toffoli)
+        num_factories       – number of magic state factories
+        error_correction_code – name of the QEC code
     """
     n_logical = max(n_logical, 1)
 
@@ -136,13 +130,13 @@ def estimate_google_resources(
         "references": [
             {
                 "key": "1",
-                "citation": "Google Quantum AI, \"Quantum error correction below the surface code threshold,\" Nature 638, 920-926 (2025).",
-                "url": "https://arxiv.org/abs/2408.13687",
+                "citation": "Sheridan et al., \"Real-time quantum error correction on a low-latency quantum processor,\" arXiv:2410.05202 (2024).",
+                "url": "https://arxiv.org/abs/2410.05202",
             },
             {
                 "key": "2",
-                "citation": "Google Willow spec sheet.",
-                "url": "https://quantumai.google/static/site-assets/downloads/willow-spec-sheet.pdf",
+                "citation": "Rigetti, \"Ankaa-3 System Launch\" (Dec 2024).",
+                "url": "https://investors.rigetti.com/news-releases/",
             },
             {
                 "key": "3",

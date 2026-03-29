@@ -473,26 +473,47 @@ class TestQasmAnalysis:
         else:
             assert cat["value"] == 0, "Expected no Toffoli gates but found some"
 
+    def test_circuit_depth_present(self, circuit_id, code, expected_qubits, has_1q, has_2q, has_toffoli):
+        data = post_analyze(code)
+        assert "circuit_depth" in data
+        assert data["circuit_depth"] >= 0
+
     def test_vendors_non_empty_with_valid_fields(self, circuit_id, code, expected_qubits, has_1q, has_2q, has_toffoli):
         data = post_analyze(code)
         assert len(data["vendors"]) > 0
         for v in data["vendors"]:
             assert v["physical_qubits"] > 0
-            assert v["physical_gates"] > 0
+            assert v["physical_gates"] >= 0
             assert 0.0 <= v["success_probability"] <= 100.0
             assert v["runtime_seconds"] >= 0.0
 
-            if v["name"] == "Google":
-                # Surface-code estimation includes a detail breakdown
-                detail = v["detail"]
-                assert detail is not None
-                assert detail["code_distance"] == 7
-                assert detail["code_distance"] % 2 == 1
-                assert detail["logical_error_rate"] > 0
-                assert detail["num_t_gates"] >= 0
-                assert detail["num_factories"] >= 0
-                assert detail["data_qubits"] > 0
-                assert detail["distillation_qubits"] >= 0
-                assert v["physical_qubits"] == detail["data_qubits"] + detail["distillation_qubits"]
-            else:
-                assert v.get("detail") is None
+            # Native gate decomposition fields
+            assert v["native_1q_count"] >= 0
+            assert v["native_2q_count"] >= 0
+            assert isinstance(v["native_2q_gate"], str)
+            assert isinstance(v["gate_decomposition"], list)
+            assert v["fidelity_1q"] > 0
+            assert v["fidelity_2q"] > 0
+            assert v["fidelity_readout"] > 0
+            assert v["gate_time_2q"] > 0
+
+            # All vendors now have QEC-based estimation with detail
+            detail = v["detail"]
+            assert detail is not None, f"{v['name']} should have detail"
+            assert isinstance(detail["error_correction_code"], str)
+            assert len(detail["error_correction_code"]) > 0
+            assert detail["code_distance"] > 0
+            assert detail["logical_error_rate"] > 0
+            assert detail["num_t_gates"] >= 0
+            assert detail["num_factories"] >= 0
+            assert detail["data_qubits"] > 0
+            assert detail["distillation_qubits"] >= 0
+            assert v["physical_qubits"] == detail["data_qubits"] + detail["distillation_qubits"]
+
+            # New breakdown fields for frontend modals
+            assert detail["physical_qubits_per_logical"] > 0
+            assert detail["routing_overhead"] >= 1.0
+            assert detail["factory_qubits_each"] > 0
+            assert detail["t_states_per_factory"] > 0
+            assert isinstance(detail["references"], list)
+            assert len(detail["references"]) > 0

@@ -10,52 +10,78 @@
     "cycle_time_seconds": 1.1e-6,
     "fidelity_1q": 0.99965,
     "fidelity_2q": 0.9967,
+    "fidelity_readout": 0.9923,
     "gate_time_1q": 2.5e-8,
     "gate_time_2q": 3.4e-8
   },
   {
     "name": "IBM",
-    "qubits_per_logical": 127,
-    "gates_per_logical": 2500,
-    "fidelity_1q": 0.99981,
-    "fidelity_2q": 0.9971,
-    "gate_time_1q": 3.5e-8,
+    "chip": "Heron R3",
+    "estimation_model": "bb_code",
+    "fidelity_1q": 0.9999,
+    "fidelity_2q": 0.99785,
+    "fidelity_readout": 0.995,
+    "gate_time_1q": 2.5e-8,
     "gate_time_2q": 6.8e-8
   },
   {
     "name": "IonQ",
-    "qubits_per_logical": 64,
-    "gates_per_logical": 1200,
-    "fidelity_1q": 0.9997,
-    "fidelity_2q": 0.9967,
+    "chip": "Forte Enterprise",
+    "estimation_model": "bb5_code",
+    "fidelity_1q": 0.9998,
+    "fidelity_2q": 0.996,
+    "fidelity_readout": 0.997,
     "gate_time_1q": 1.0e-5,
-    "gate_time_2q": 2.0e-4
+    "gate_time_2q": 6.0e-4
   },
   {
     "name": "Quantinuum",
-    "qubits_per_logical": 32,
-    "gates_per_logical": 800,
-    "fidelity_1q": 0.99997,
-    "fidelity_2q": 0.9993,
-    "gate_time_1q": 1.0e-5,
-    "gate_time_2q": 2.0e-4
+    "chip": "Helios",
+    "estimation_model": "color_code",
+    "fidelity_1q": 0.999975,
+    "fidelity_2q": 0.99921,
+    "fidelity_readout": 0.99952,
+    "gate_time_1q": 5.0e-6,
+    "gate_time_2q": 7.0e-5
   },
   {
     "name": "Rigetti",
-    "qubits_per_logical": 84,
-    "gates_per_logical": 1600,
-    "fidelity_1q": 0.995,
-    "fidelity_2q": 0.97,
+    "chip": "Ankaa-3",
+    "estimation_model": "surface_code_rigetti",
+    "fidelity_1q": 0.999,
+    "fidelity_2q": 0.995,
+    "fidelity_readout": 0.976,
     "gate_time_1q": 4.0e-8,
-    "gate_time_2q": 8.0e-8
+    "gate_time_2q": 5.6e-8
   },
   {
     "name": "Atom Computing",
-    "qubits_per_logical": 100,
-    "gates_per_logical": 2000,
+    "chip": "AC1000",
+    "estimation_model": "geometric_4d",
+    "fidelity_1q": 0.9993,
+    "fidelity_2q": 0.996,
+    "fidelity_readout": 0.995,
+    "gate_time_1q": 1.1e-7,
+    "gate_time_2q": 1.0e-6
+  },
+  {
+    "name": "QuEra",
+    "chip": "Aquila",
+    "estimation_model": "surface_code_quera",
     "fidelity_1q": 0.999,
     "fidelity_2q": 0.995,
-    "gate_time_1q": 1.0e-6,
-    "gate_time_2q": 5.0e-4
+    "fidelity_readout": 0.997,
+    "gate_time_1q": 2.0e-7,
+    "gate_time_2q": 3.0e-7
+  },
+  {
+    "name": "Quandela",
+    "chip": "Belenos",
+    "estimation_model": "honeycomb_floquet",
+    "fidelity_1q": 0.996,
+    "fidelity_2q": 0.99,
+    "fidelity_readout": 0.99,
+    "gate_time_1q": 1.25e-8,
+    "gate_time_2q": 2.5e-8
   }
 ]
