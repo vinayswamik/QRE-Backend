@@ -53,8 +53,8 @@ def _parse_gate_counts(code: str) -> tuple[int, Counter, dict[str, int], int]:
     module = pyqasm.loads(code)
     module.unroll()
     module.remove_barriers()
-    module.remove_measurements()
-    module.remove_includes()
+    # module.remove_measurements() # need for runtime calculation
+    # module.remove_includes() # need for running on other tools
 
     total_qubits = max(module.num_qubits, 1)
     try:
