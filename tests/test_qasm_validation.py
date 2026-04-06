@@ -1,13 +1,13 @@
 """
 Tests for POST /api/v1/qasm/validate
 
-Each test targets a distinct behaviour category:
-  1. Syntactically + semantically valid QASM  → valid=True
-  2. Syntactically invalid QASM               → valid=False with a parse error
-  3. Semantic error (undeclared register)     → valid=False with a semantic error
+Covers:
+  1. Valid QASM 2.0 / 3.0 programs
+  2. Syntax errors (garbage input)
+  3. Semantic errors (undeclared registers, type mismatches)
+  4. Edge cases (empty body, missing field, whitespace-only code)
 """
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -17,7 +17,7 @@ client = TestClient(app)
 ENDPOINT = "/api/v1/qasm/validate"
 
 # ---------------------------------------------------------------------------
-# Fixtures / helpers
+# Fixtures
 # ---------------------------------------------------------------------------
 
 VALID_BELL_STATE = """\
@@ -30,6 +30,30 @@ cx q[0], q[1];
 measure q -> c;
 """
 
+VALID_BELL_V3 = """\
+OPENQASM 3.0;
+include "stdgates.inc";
+qubit[2] q; bit[2] c;
+h q[0]; cx q[0],q[1];
+c = measure q;
+"""
+
+VALID_GHZ_5Q = """\
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[5]; creg c[5];
+h q[0]; cx q[0],q[1]; cx q[1],q[2]; cx q[2],q[3]; cx q[3],q[4];
+measure q -> c;
+"""
+
+VALID_SINGLE_QUBIT = """\
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[1]; creg c[1];
+h q[0]; t q[0]; s q[0];
+measure q -> c;
+"""
+
 INVALID_SYNTAX = "this is not valid qasm code !!!"
 
 INVALID_SEMANTIC = """\
@@ -38,47 +62,148 @@ include "qelib1.inc";
 h q[0];
 """
 
-
-def post_validate(code: str) -> dict:
-    """Helper that POSTs to the validate endpoint and returns the JSON body."""
-    response = client.post(ENDPOINT, json={"code": code})
-    assert response.status_code == 200, (
-        f"Expected 200, got {response.status_code}: {response.text}"
-    )
-    return response.json()
+INVALID_PARTIAL_HEADER = """\
+OPENQASM 2.0;
+"""
 
 
 # ---------------------------------------------------------------------------
-# Test cases
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-class TestQasmValidation:
-    def test_valid_qasm_returns_valid_true(self):
-        """A well-formed Bell-state circuit must pass validation."""
-        data = post_validate(VALID_BELL_STATE)
+def post_validate(code: str):
+    """Send QASM code to the validate endpoint and return the response."""
+    return client.post(ENDPOINT, json={"code": code})
 
+
+# ---------------------------------------------------------------------------
+# Valid QASM
+# ---------------------------------------------------------------------------
+
+
+class TestValidQasm:
+    """Well-formed QASM programs should return valid=True."""
+
+    def test_bell_state_v2_returns_valid(self):
+        """QASM 2.0 Bell state should validate successfully."""
+        resp = post_validate(VALID_BELL_STATE)
+        assert resp.status_code == 200
+        data = resp.json()
         assert data["valid"] is True
         assert "valid" in data["message"].lower()
         assert data["error_type"] is None
 
-    def test_syntax_error_returns_valid_false(self):
-        """Garbage input must fail with valid=False and a non-empty message."""
-        data = post_validate(INVALID_SYNTAX)
+    def test_bell_state_v3_returns_valid(self):
+        """QASM 3.0 Bell state should validate successfully."""
+        resp = post_validate(VALID_BELL_V3)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["valid"] is True
+        assert data["error_type"] is None
 
+    def test_ghz_5q_returns_valid(self):
+        """5-qubit GHZ state should validate successfully."""
+        resp = post_validate(VALID_GHZ_5Q)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["valid"] is True
+
+    def test_single_qubit_returns_valid(self):
+        """Single-qubit H-T-S circuit should validate successfully."""
+        resp = post_validate(VALID_SINGLE_QUBIT)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["valid"] is True
+
+    def test_response_has_all_fields(self):
+        """Response must contain valid, message, and error_type keys."""
+        resp = post_validate(VALID_BELL_STATE)
+        data = resp.json()
+        assert "valid" in data
+        assert "message" in data
+        assert "error_type" in data
+
+
+# ---------------------------------------------------------------------------
+# Invalid QASM — syntax errors
+# ---------------------------------------------------------------------------
+
+
+class TestSyntaxErrors:
+    """Syntactically broken QASM should return valid=False."""
+
+    def test_garbage_input_returns_invalid(self):
+        """Non-QASM text should return valid=False with an error type."""
+        resp = post_validate(INVALID_SYNTAX)
+        assert resp.status_code == 200
+        data = resp.json()
         assert data["valid"] is False
-        assert data["message"]           # non-empty error description
+        assert data["message"]  # non-empty
         assert data["error_type"] is not None
 
-    def test_semantic_error_undeclared_register_returns_valid_false(self):
-        """
-        A gate applied to a qubit register that was never declared is a
-        semantic error; pyqasm should catch it and we must propagate it.
-        """
-        data = post_validate(INVALID_SEMANTIC)
+    def test_partial_header_only(self):
+        """A bare OPENQASM header with no body should return a valid response shape."""
+        resp = post_validate(INVALID_PARTIAL_HEADER)
+        assert resp.status_code == 200
+        data = resp.json()
+        # A bare header with no gates/registers may pass or fail
+        # depending on pyqasm — just check the shape is correct
+        assert isinstance(data["valid"], bool)
+        assert isinstance(data["message"], str)
 
+
+# ---------------------------------------------------------------------------
+# Invalid QASM — semantic errors
+# ---------------------------------------------------------------------------
+
+
+class TestSemanticErrors:
+    """Semantically invalid QASM (e.g. undeclared registers) should fail."""
+
+    def test_undeclared_register(self):
+        """Using an undeclared register should return valid=False."""
+        resp = post_validate(INVALID_SEMANTIC)
+        assert resp.status_code == 200
+        data = resp.json()
         assert data["valid"] is False
         assert data["message"]
         assert data["error_type"] is not None
-        # pyqasm surfaces this as a ValidationError mentioning the register
         assert "q" in data["message"]
+
+
+# ---------------------------------------------------------------------------
+# Edge cases — request validation (Pydantic)
+# ---------------------------------------------------------------------------
+
+
+class TestRequestValidation:
+    """Pydantic request validation edge cases (empty body, wrong types)."""
+
+    def test_empty_code_returns_422(self):
+        """min_length=1 on the code field should reject empty strings."""
+        resp = client.post(ENDPOINT, json={"code": ""})
+        assert resp.status_code == 422
+
+    def test_missing_code_field_returns_422(self):
+        """Omitting the code field entirely should return 422."""
+        resp = client.post(ENDPOINT, json={})
+        assert resp.status_code == 422
+
+    def test_no_body_returns_422(self):
+        """Request with no body should return 422."""
+        resp = client.post(ENDPOINT)
+        assert resp.status_code == 422
+
+    def test_wrong_content_type_returns_422(self):
+        """Non-JSON content type should return 422."""
+        resp = client.post(
+            ENDPOINT, content="not json", headers={"Content-Type": "text/plain"}
+        )
+        assert resp.status_code == 422
+
+    def test_code_must_be_string(self):
+        """Non-string code value should be coerced or rejected."""
+        resp = client.post(ENDPOINT, json={"code": 12345})
+        # Pydantic coerces int to str or rejects — either way shape is valid
+        assert resp.status_code in (200, 422)

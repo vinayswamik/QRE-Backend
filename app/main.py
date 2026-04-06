@@ -1,3 +1,5 @@
+"""FastAPI application entry point with CORS, routing, and health check."""
+
 import logging
 
 from fastapi import FastAPI
@@ -31,4 +33,5 @@ app.include_router(api_router)
 
 @app.get("/health", tags=["meta"])
 def health_check() -> dict:
+    """Return application status and version."""
     return {"status": "ok", "version": settings.APP_VERSION}

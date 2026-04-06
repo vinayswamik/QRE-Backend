@@ -1,0 +1,28 @@
+[tool.mypy]
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+module = ["qsharp.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning:mangum",
+]
+
+[tool.pylint.main]
+# Third-party packages installed in venv — pylint can't always resolve them
+ignored-modules = ["fastapi", "pydantic", "pydantic_settings", "mangum", "pytest", "pyqasm", "qsharp", "httpx"]
+
+[tool.pylint."messages control"]
+disable = [
+    "E0401",   # import-error: third-party packages not visible to pylint
+]
+
+[tool.pylint.design]
+# Pydantic models and small test classes legitimately have < 2 public methods
+min-public-methods = 0
+
+[tool.pylint.similarities]
+# Raise threshold so test fixture duplication doesn't trigger R0801
+min-similarity-lines = 15

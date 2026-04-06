@@ -1,3 +1,5 @@
+"""Version 1 API router that aggregates all sub-routers."""
+
 from fastapi import APIRouter
 
 from app.api.v1.routes import qasm

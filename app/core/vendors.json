@@ -1,87 +1,238 @@
-[
-  {
-    "name": "Google",
-    "chip": "Willow",
-    "estimation_model": "surface_code",
-    "physical_error_1q": 3.5e-4,
-    "physical_error_2q": 3.3e-3,
-    "measurement_error": 7.7e-3,
-    "lambda_suppression": 2.14,
-    "cycle_time_seconds": 1.1e-6,
-    "fidelity_1q": 0.99965,
-    "fidelity_2q": 0.9967,
-    "fidelity_readout": 0.9923,
-    "gate_time_1q": 2.5e-8,
-    "gate_time_2q": 3.4e-8
+{
+  "Google Willow": {
+    "processor": "Willow (105 qubits)",
+    "technology": "Superconducting (transmon)",
+    "year": 2024,
+    "source": "Acharya et al., Nature 638 (2025); Google AI blog Dec 9 2024",
+    "available": true,
+    "qubit_params": {
+      "name": "google_willow",
+      "instruction_set": "GateBased",
+      "one_qubit_gate_time": "25 ns",
+      "two_qubit_gate_time": "32 ns",
+      "one_qubit_gate_error_rate": 3.5e-4,
+      "two_qubit_gate_error_rate": 3.3e-3,
+      "one_qubit_measurement_error_rate": 4.7e-3,
+      "one_qubit_measurement_time": "500 ns",
+      "t_gate_time": "25 ns",
+      "t_gate_error_rate": 3.5e-4,
+      "idle_error_rate": 3.7e-4
+    },
+    "qec_scheme": {
+      "name": "surface_code",
+      "crossing_prefactor": 0.03,
+      "error_correction_threshold": 0.01,
+      "distance_coefficient_power": 0,
+      "logical_cycle_time": "(4 * twoQubitGateTime + 2 * oneQubitMeasurementTime) * codeDistance",
+      "physical_qubits_per_logical_qubit": "2 * codeDistance * codeDistance"
+    },
+    "max_code_distance": 500
   },
-  {
-    "name": "IBM",
-    "chip": "Heron R3",
-    "estimation_model": "bb_code",
-    "fidelity_1q": 0.9999,
-    "fidelity_2q": 0.99785,
-    "fidelity_readout": 0.995,
-    "gate_time_1q": 2.5e-8,
-    "gate_time_2q": 6.8e-8
+
+  "IBM Heron R3": {
+    "processor": "Heron R3 / ibm_boston (156 qubits)",
+    "technology": "Superconducting (transmon, tunable coupler)",
+    "year": 2025,
+    "source": "IBM QDC 2025; IBM Quantum Platform; Bravyi et al. Nature 627 (2024); arXiv:2308.07915",
+    "available": true,
+    "qubit_params": {
+      "name": "ibm_heron_r3",
+      "instruction_set": "GateBased",
+      "one_qubit_gate_time": "25 ns",
+      "two_qubit_gate_time": "60 ns",
+      "one_qubit_gate_error_rate": 2e-4,
+      "two_qubit_gate_error_rate": 1.52e-3,
+      "one_qubit_measurement_error_rate": 6e-3,
+      "one_qubit_measurement_time": "1400 ns",
+      "t_gate_time": "25 ns",
+      "t_gate_error_rate": 2e-4,
+      "idle_error_rate": 7.1e-5
+    },
+    "qec_scheme": {
+      "name": "ibm_qldpc_bivariate_bicycle",
+      "crossing_prefactor": 0.1,
+      "error_correction_threshold": 0.008,
+      "distance_coefficient_power": 0,
+      "logical_cycle_time": "(4 * twoQubitGateTime + 2 * oneQubitMeasurementTime) * codeDistance",
+      "physical_qubits_per_logical_qubit": "codeDistance * codeDistance / 12"
+    },
+    "max_code_distance": 500
   },
-  {
-    "name": "IonQ",
-    "chip": "Forte Enterprise",
-    "estimation_model": "bb5_code",
-    "fidelity_1q": 0.9998,
-    "fidelity_2q": 0.996,
-    "fidelity_readout": 0.997,
-    "gate_time_1q": 1.0e-5,
-    "gate_time_2q": 6.0e-4
+
+  "Rigetti Ankaa-3": {
+    "processor": "Ankaa-3 (36 qubits)",
+    "technology": "Superconducting",
+    "year": 2025,
+    "source": "quantumintel.tech comparison database, March 2026; Rigetti Ankaa-3 product page",
+    "available": true,
+    "qubit_params": {
+      "name": "rigetti_ankaa3",
+      "instruction_set": "GateBased",
+      "one_qubit_gate_time": "30 ns",
+      "two_qubit_gate_time": "60 ns",
+      "one_qubit_gate_error_rate": 3e-3,
+      "two_qubit_gate_error_rate": 5e-3,
+      "one_qubit_measurement_error_rate": 5e-3,
+      "one_qubit_measurement_time": "700 ns",
+      "t_gate_time": "30 ns",
+      "t_gate_error_rate": 3e-3,
+      "idle_error_rate": 1e-3
+    },
+    "qec_scheme": {
+      "name": "surface_code",
+      "crossing_prefactor": 0.03,
+      "error_correction_threshold": 0.01,
+      "distance_coefficient_power": 0,
+      "logical_cycle_time": "(4 * twoQubitGateTime + 2 * oneQubitMeasurementTime) * codeDistance",
+      "physical_qubits_per_logical_qubit": "2 * codeDistance * codeDistance"
+    },
+    "max_code_distance": 500
   },
-  {
-    "name": "Quantinuum",
-    "chip": "Helios",
-    "estimation_model": "color_code",
-    "fidelity_1q": 0.999975,
-    "fidelity_2q": 0.99921,
-    "fidelity_readout": 0.99952,
-    "gate_time_1q": 5.0e-6,
-    "gate_time_2q": 7.0e-5
+
+  "IonQ Tempo": {
+    "processor": "Tempo (64 qubits, all-to-all)",
+    "technology": "Trapped Ion (Ytterbium-171)",
+    "year": 2025,
+    "source": "IonQ blog Oct 2025; quantumintel.tech; IonQ Tempo spec sheet",
+    "available": true,
+    "qubit_params": {
+      "name": "ionq_tempo",
+      "instruction_set": "GateBased",
+      "one_qubit_gate_time": "10000 ns",
+      "two_qubit_gate_time": "150000 ns",
+      "one_qubit_gate_error_rate": 1e-4,
+      "two_qubit_gate_error_rate": 3e-3,
+      "one_qubit_measurement_error_rate": 5e-3,
+      "one_qubit_measurement_time": "200000 ns",
+      "t_gate_time": "10000 ns",
+      "t_gate_error_rate": 1e-4,
+      "idle_error_rate": 1e-5
+    },
+    "qec_scheme": {
+      "name": "surface_code",
+      "crossing_prefactor": 0.03,
+      "error_correction_threshold": 0.01,
+      "distance_coefficient_power": 0,
+      "logical_cycle_time": "(4 * twoQubitGateTime + 2 * oneQubitMeasurementTime) * codeDistance",
+      "physical_qubits_per_logical_qubit": "2 * codeDistance * codeDistance"
+    },
+    "max_code_distance": 500
   },
-  {
-    "name": "Rigetti",
-    "chip": "Ankaa-3",
-    "estimation_model": "surface_code_rigetti",
-    "fidelity_1q": 0.999,
-    "fidelity_2q": 0.995,
-    "fidelity_readout": 0.976,
-    "gate_time_1q": 4.0e-8,
-    "gate_time_2q": 5.6e-8
+
+  "Quantinuum Helios": {
+    "processor": "Helios (96 qubits, all-to-all via shuttling)",
+    "technology": "Trapped Ion (QCCD architecture, Yb-171)",
+    "year": 2025,
+    "source": "quantinuum.com/helios spec sheet (2025); Landahl et al. arXiv:1108.5738 (2011)",
+    "available": true,
+    "qubit_params": {
+      "name": "quantinuum_helios",
+      "instruction_set": "GateBased",
+      "one_qubit_gate_time": "10000 ns",
+      "two_qubit_gate_time": "150000 ns",
+      "one_qubit_gate_error_rate": 2.5e-5,
+      "two_qubit_gate_error_rate": 7.9e-4,
+      "one_qubit_measurement_error_rate": 2e-3,
+      "one_qubit_measurement_time": "400000 ns",
+      "t_gate_time": "10000 ns",
+      "t_gate_error_rate": 1e-4,
+      "idle_error_rate": 1e-6
+    },
+    "qec_scheme": {
+      "name": "quantinuum_color_code",
+      "crossing_prefactor": 0.08,
+      "error_correction_threshold": 0.007,
+      "distance_coefficient_power": 0,
+      "logical_cycle_time": "(6 * twoQubitGateTime + 3 * oneQubitMeasurementTime) * codeDistance",
+      "physical_qubits_per_logical_qubit": "3 * codeDistance * codeDistance"
+    },
+    "max_code_distance": 500
   },
-  {
-    "name": "Atom Computing",
-    "chip": "AC1000",
-    "estimation_model": "geometric_4d",
-    "fidelity_1q": 0.9993,
-    "fidelity_2q": 0.996,
-    "fidelity_readout": 0.995,
-    "gate_time_1q": 1.1e-7,
-    "gate_time_2q": 1.0e-6
+
+  "Atom Computing": {
+    "processor": "AC1000 (>1200 qubits, Yb-171 nuclear-spin)",
+    "technology": "Neutral Atom (Ytterbium-171)",
+    "year": 2025,
+    "source": "Atom Computing AC1000 product page (2025); AC1000 whitepaper (2025)",
+    "available": true,
+    "qubit_params": {
+      "name": "atom_computing_ac1000",
+      "instruction_set": "GateBased",
+      "one_qubit_gate_time": "15000 ns",
+      "two_qubit_gate_time": "750 ns",
+      "one_qubit_gate_error_rate": 1e-3,
+      "two_qubit_gate_error_rate": 4e-3,
+      "one_qubit_measurement_error_rate": 2e-3,
+      "one_qubit_measurement_time": "3000000 ns",
+      "t_gate_time": "15000 ns",
+      "t_gate_error_rate": 1e-3,
+      "idle_error_rate": 3.75e-7
+    },
+    "qec_scheme": {
+      "name": "surface_code",
+      "crossing_prefactor": 0.03,
+      "error_correction_threshold": 0.01,
+      "distance_coefficient_power": 0,
+      "logical_cycle_time": "(4 * twoQubitGateTime + 2 * oneQubitMeasurementTime) * codeDistance",
+      "physical_qubits_per_logical_qubit": "2 * codeDistance * codeDistance"
+    },
+    "max_code_distance": 500
   },
-  {
-    "name": "QuEra",
-    "chip": "Aquila",
-    "estimation_model": "surface_code_quera",
-    "fidelity_1q": 0.999,
-    "fidelity_2q": 0.995,
-    "fidelity_readout": 0.997,
-    "gate_time_1q": 2.0e-7,
-    "gate_time_2q": 3.0e-7
+
+  "QuEra Gemini": {
+    "processor": "Gemini (260 qubits, Rb-87, DQA shuttling)",
+    "technology": "Neutral Atom (Rubidium-87, Rydberg gates)",
+    "year": 2025,
+    "source": "QuEra Gemini product page; quantumzeitgeist.com; Graham et al. Nature 604 (2022)",
+    "available": true,
+    "qubit_params": {
+      "name": "quera_gemini",
+      "instruction_set": "GateBased",
+      "one_qubit_gate_time": "5000 ns",
+      "two_qubit_gate_time": "360 ns",
+      "one_qubit_gate_error_rate": 1e-3,
+      "two_qubit_gate_error_rate": 8e-3,
+      "one_qubit_measurement_error_rate": 3e-3,
+      "one_qubit_measurement_time": "3000000 ns",
+      "t_gate_time": "5000 ns",
+      "t_gate_error_rate": 1e-3,
+      "idle_error_rate": 2e-7
+    },
+    "qec_scheme": {
+      "name": "surface_code",
+      "crossing_prefactor": 0.03,
+      "error_correction_threshold": 0.01,
+      "distance_coefficient_power": 0,
+      "logical_cycle_time": "(4 * twoQubitGateTime + 2 * oneQubitMeasurementTime) * codeDistance",
+      "physical_qubits_per_logical_qubit": "2 * codeDistance * codeDistance"
+    },
+    "max_code_distance": 500
   },
-  {
-    "name": "Quandela",
-    "chip": "Belenos",
-    "estimation_model": "honeycomb_floquet",
-    "fidelity_1q": 0.996,
-    "fidelity_2q": 0.99,
-    "fidelity_readout": 0.99,
-    "gate_time_1q": 1.25e-8,
-    "gate_time_2q": 2.5e-8
+
+  "PsiQuantum": {
+    "processor": "N/A — pre-processor stage",
+    "technology": "Photonic (fusion-based)",
+    "year": null,
+    "source": "Public press releases; no primary spec sheet found",
+    "available": false,
+    "reason": "PsiQuantum has not released a publicly accessible processor or published standard gate fidelity / error rate metrics as of early 2026. Their approach targets a large-scale fault-tolerant machine from the outset."
+  },
+
+  "Xanadu": {
+    "processor": "Borealis (216-mode GBS) / Aurora (research)",
+    "technology": "Photonic (squeezed light, GBS)",
+    "year": 2022,
+    "source": "quantumintel.tech; Xanadu public materials",
+    "available": false,
+    "reason": "Standard qubit error-rate / fidelity metrics don't apply to Xanadu's GBS architecture. Aurora is their next-gen fault-tolerant platform but qubit count and error rates are not publicly disclosed as of March 2026."
+  },
+
+  "Quandela": {
+    "processor": "MosaiQ (photonic QD sources)",
+    "technology": "Photonic (single-photon, linear optical)",
+    "year": null,
+    "source": "No primary spec sheet found",
+    "available": false,
+    "reason": "No spec sheet with standard qubit metrics found. Photonic QC is characterised by photon indistinguishability, source brightness, and interferometric visibility rather than traditional gate error rates."
   }
-]
+}
