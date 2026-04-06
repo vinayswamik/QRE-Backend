@@ -18,8 +18,14 @@ WORKDIR /qsharp/source/pip
 RUN maturin build --release --out /wheels
 
 # Install all non-qsharp deps
-COPY requirements-no-qsharp.txt /tmp/
-RUN pip install -r /tmp/requirements-no-qsharp.txt -t /install/
+RUN pip install \
+    "fastapi>=0.135.1" \
+    "uvicorn[standard]>=0.42.0" \
+    "pydantic>=2.12.5" \
+    "pydantic-settings>=2.13.1" \
+    "pyqasm>=1.0.1" \
+    "mangum>=0.21.0" \
+    -t /install/
 
 # Install the built qsharp wheel (with its Python deps)
 RUN pip install /wheels/qsharp-*.whl -t /install/
