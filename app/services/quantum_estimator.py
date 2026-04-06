@@ -214,12 +214,12 @@ class QuantumEstimator:
 
         # Pre-check: all physical error rates must be below the QEC threshold
         threshold = qec["error_correction_threshold"]
-        over = [f"{k}={qp[k]}" for k in self._ERROR_RATE_KEYS if qp[k] >= threshold]
+        over = [k for k in self._ERROR_RATE_KEYS if qp[k] >= threshold]
         if over:
             return {
                 **base,
                 "status": "above_threshold",
-                "detail": f"ABOVE QEC THRESHOLD ({threshold}): {', '.join(over)}",
+                "detail": "Hardware error rates exceed the QEC threshold for this processor.",
             }
 
         params = self._params_cache.get(
@@ -228,8 +228,12 @@ class QuantumEstimator:
 
         try:
             raw = _qsharp_estimate(qasm_str, params=params).data()
-        except (RuntimeError, ValueError, OSError) as exc:
-            return {**base, "status": "error", "detail": str(exc)}
+        except (RuntimeError, ValueError, OSError):
+            return {
+                **base,
+                "status": "error",
+                "detail": "Estimation failed. Check circuit validity and try again.",
+            }
 
         result = {**base, **self._parse_raw_result(raw), "status": "success"}
         self._cache[key] = result

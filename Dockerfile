@@ -3,7 +3,7 @@ FROM public.ecr.aws/lambda/python:3.13 AS builder
 
 # Install build tools + Rust
 RUN dnf install -y gcc gcc-c++ make openssl-devel git && \
-    curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+    curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.86.0 --profile minimal
 
 ENV PATH="/root/.cargo/bin:$PATH"
 

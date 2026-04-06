@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     """QRE Backend configuration with sensible defaults."""
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     APP_NAME: str = "QRE Backend"

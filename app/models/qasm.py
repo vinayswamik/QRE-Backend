@@ -8,7 +8,12 @@ from pydantic import BaseModel, Field
 class QasmValidateRequest(BaseModel):
     """Payload for the /qasm/validate endpoint."""
 
-    code: str = Field(..., min_length=1, description="OpenQASM source code to validate")
+    code: str = Field(
+        ...,
+        min_length=1,
+        max_length=100_000,
+        description="OpenQASM source code to validate",
+    )
 
 
 class QasmValidateResponse(BaseModel):
@@ -24,7 +29,12 @@ class QasmValidateResponse(BaseModel):
 class QasmAnalyzeRequest(BaseModel):
     """Payload for the /qasm/analyze endpoint."""
 
-    code: str = Field(..., min_length=1, description="OpenQASM source code to analyze")
+    code: str = Field(
+        ...,
+        min_length=1,
+        max_length=100_000,
+        description="OpenQASM source code to analyze",
+    )
 
 
 class GateDetail(BaseModel):

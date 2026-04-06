@@ -9,9 +9,10 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   FUNCTION_NAME: qre-backend
   ECR_REPOSITORY: qre-backend
-  LAMBDA_ROLE: arn:aws:iam::149051628500:role/qre-lambda-role
+  LAMBDA_ROLE: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/qre-lambda-role
 
 jobs:
   deploy:
@@ -66,8 +67,8 @@ jobs:
               --package-type Image \
               --code ImageUri="$IMAGE_URI" \
               --role $LAMBDA_ROLE \
-              --memory-size 1024 \
-              --timeout 60
+              --memory-size 2048 \
+              --timeout 300
             aws lambda wait function-active --function-name $FUNCTION_NAME
 
           elif [ "$PACKAGE_TYPE" = "NOT_FOUND" ]; then
@@ -77,8 +78,8 @@ jobs:
               --package-type Image \
               --code ImageUri="$IMAGE_URI" \
               --role $LAMBDA_ROLE \
-              --memory-size 1024 \
-              --timeout 60
+              --memory-size 2048 \
+              --timeout 300
             aws lambda wait function-active --function-name $FUNCTION_NAME
 
           else
@@ -86,6 +87,11 @@ jobs:
             aws lambda update-function-code \
               --function-name $FUNCTION_NAME \
               --image-uri "$IMAGE_URI"
+            aws lambda wait function-updated --function-name $FUNCTION_NAME
+            aws lambda update-function-configuration \
+              --function-name $FUNCTION_NAME \
+              --memory-size 2048 \
+              --timeout 300
             aws lambda wait function-updated --function-name $FUNCTION_NAME
           fi
 
@@ -100,5 +106,5 @@ jobs:
             --statement-id api-gateway-invoke \
             --action lambda:InvokeFunction \
             --principal apigateway.amazonaws.com \
-            --source-arn "arn:aws:execute-api:$AWS_REGION:149051628500:2gs291cjg2/*" \
+            --source-arn "arn:aws:execute-api:$AWS_REGION:$AWS_ACCOUNT_ID:2gs291cjg2/*" \
           2>/dev/null || echo "Permission already exists — skipping"

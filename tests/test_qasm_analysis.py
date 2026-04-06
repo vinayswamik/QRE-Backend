@@ -679,3 +679,8 @@ class TestAnalyzeRequestValidation:
         """Request with no body at all should return 422."""
         resp = client.post(ENDPOINT)
         assert resp.status_code == 422
+
+    def test_code_exceeding_max_length_returns_422(self):
+        """Code strings longer than 100,000 chars should be rejected."""
+        resp = client.post(ENDPOINT, json={"code": "x" * 100_001})
+        assert resp.status_code == 422

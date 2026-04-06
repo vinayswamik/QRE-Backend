@@ -1,11 +1,15 @@
 """High-level QASM validation and analysis service."""
 
-import logging
 from collections import Counter
 
 import pyqasm
 from openqasm3.ast import QuantumGate, QuantumPhase
-from pyqasm.exceptions import QASM3ParsingError, QasmParsingError, ValidationError
+from pyqasm.exceptions import (
+    QASM3ParsingError,
+    QasmParsingError,
+    UnrollError,
+    ValidationError,
+)
 
 from app.models.qasm import (
     GateCategoryBreakdown,
@@ -15,8 +19,6 @@ from app.models.qasm import (
     VendorEstimateResult,
 )
 from app.services.quantum_estimator import QuantumEstimator
-
-logger = logging.getLogger(__name__)
 
 _estimator = QuantumEstimator()
 
@@ -33,13 +35,11 @@ def _parse_gate_counts(code: str) -> tuple[int, Counter, dict[str, int], int]:
     module = pyqasm.loads(code)
     module.unroll()
     module.remove_barriers()
-    module.remove_measurements()
-    module.remove_includes()
 
     total_qubits = max(module.num_qubits, 1)
     try:
         circuit_depth = module.depth()
-    except Exception:
+    except (UnrollError, ValidationError, ValueError):
         circuit_depth = sum(
             1
             for stmt in module.unrolled_ast.statements
@@ -63,7 +63,11 @@ def _parse_gate_counts(code: str) -> tuple[int, Counter, dict[str, int], int]:
 def _build_gate_breakdown(
     gate_counter: Counter, gate_qubit_map: dict[str, int]
 ) -> tuple[list[GateCategoryBreakdown], int, int, int, int]:
-    categories: dict[str, Counter] = {"1Q": Counter(), "2Q": Counter(), "Toffoli": Counter()}
+    categories: dict[str, Counter] = {
+        "1Q": Counter(),
+        "2Q": Counter(),
+        "Toffoli": Counter(),
+    }
     for gate, count in gate_counter.items():
         num_qubits = gate_qubit_map.get(gate, 1)
         categories[_classify_gate(num_qubits)][gate] = count
@@ -89,8 +93,13 @@ def _build_gate_breakdown(
     n_1q = sum(categories["1Q"].values())
     n_2q = sum(categories["2Q"].values())
     n_toffoli = sum(categories["Toffoli"].values())
-    n_t = categories["1Q"].get("t", 0) + categories["1Q"].get("tdg", 0)
-    return breakdown, n_1q, n_2q, n_toffoli, n_t
+    return (
+        breakdown,
+        n_1q,
+        n_2q,
+        n_toffoli,
+        (categories["1Q"].get("t", 0) + categories["1Q"].get("tdg", 0)),
+    )
 
 
 def validate_qasm(code: str) -> QasmValidateResponse:
@@ -113,8 +122,12 @@ def validate_qasm(code: str) -> QasmValidateResponse:
 
 def analyze_qasm(code: str) -> QasmAnalyzeResponse:
     """Estimate quantum resources for the given circuit across all vendors."""
-    circuit_qubits, gate_counter, gate_qubit_map, circuit_depth = _parse_gate_counts(code)
-    gate_breakdown, n_1q, n_2q, n_toffoli, _ = _build_gate_breakdown(gate_counter, gate_qubit_map)
+    circuit_qubits, gate_counter, gate_qubit_map, circuit_depth = _parse_gate_counts(
+        code
+    )
+    gate_breakdown, n_1q, n_2q, n_toffoli, _ = _build_gate_breakdown(
+        gate_counter, gate_qubit_map
+    )
     circuit_gates = n_1q + n_2q + n_toffoli
 
     raw_results = _estimator.estimate(code)
