@@ -8,6 +8,10 @@ on:
       - 'app/**'
       - 'handler.py'
       - 'requirements.txt'
+      - 'vendors.json'
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -16,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -31,10 +35,13 @@ jobs:
     name: Deploy to Lambda
     runs-on: ubuntu-latest
     needs: test
+    permissions:
+      contents: read
+      id-token: write  # required for OIDC token issuance
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -52,15 +59,14 @@ jobs:
           cd package
           zip -r ../lambda.zip .
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Deploy to Lambda
         run: |
           aws lambda update-function-code \
-            --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} \
+            --function-name qre-backend \
             --zip-file fileb://lambda.zip
