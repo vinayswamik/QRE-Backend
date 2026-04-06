@@ -42,13 +42,17 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install production dependencies into package/
-        run: pip install -r requirements.txt -t package/
-
-      - name: Copy app code into package/
+      - name: Build deployment package inside Lambda-compatible container
         run: |
-          cp -r app package/
-          cp handler.py package/
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            public.ecr.aws/lambda/python:3.13 \
+            bash -c "
+              pip install -r requirements.txt -t package/ &&
+              cp -r app package/ &&
+              cp handler.py package/
+            "
 
       - name: Create deployment zip
         run: |
