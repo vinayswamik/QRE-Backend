@@ -49,7 +49,9 @@ jobs:
 
       - name: Install production dependencies into package/ (Lambda-compatible)
         run: |
+          mkdir -p package
           docker run --rm --entrypoint python \
+            --user $(id -u):$(id -g) \
             -v ${{ github.workspace }}:/workspace \
             public.ecr.aws/lambda/python:3.13 \
             -m pip install -r /workspace/requirements.txt -t /workspace/package/
