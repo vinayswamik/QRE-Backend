@@ -49,10 +49,10 @@ jobs:
 
       - name: Install production dependencies into package/ (Lambda-compatible)
         run: |
-          docker run --rm \
+          docker run --rm --entrypoint python \
             -v ${{ github.workspace }}:/workspace \
             public.ecr.aws/lambda/python:3.13 \
-            pip install -r /workspace/requirements.txt -t /workspace/package/
+            -m pip install -r /workspace/requirements.txt -t /workspace/package/
 
       - name: Copy app code into package/
         run: |
