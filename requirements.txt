@@ -1,7 +1,7 @@
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-pydantic>=2.7.0
-pydantic-settings>=2.3.0
-pyqasm>=0.1.0
-mangum>=0.17.0,<1.0
+fastapi>=0.135.1
+uvicorn[standard]>=0.42.0
+pydantic>=2.12.5
+pydantic-settings>=2.13.1
+pyqasm>=1.0.1
+mangum>=0.21.0
 qsharp>=1.27.0
