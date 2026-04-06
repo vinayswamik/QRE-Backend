@@ -9,6 +9,8 @@ on:
       - 'handler.py'
       - 'requirements.txt'
       - 'vendors.json'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
 
 jobs:
   test:
