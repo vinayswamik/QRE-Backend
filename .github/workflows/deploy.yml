@@ -9,10 +9,6 @@ on:
       - 'handler.py'
       - 'requirements.txt'
       - 'vendors.json'
-  workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   test:
@@ -36,9 +32,6 @@ jobs:
     name: Deploy to Lambda
     runs-on: ubuntu-latest
     needs: test
-    permissions:
-      contents: read
-      id-token: write  # required for OIDC token issuance
     steps:
       - uses: actions/checkout@v4
 
@@ -47,14 +40,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install production dependencies into package/ (Lambda-compatible)
-        run: |
-          mkdir -p package
-          docker run --rm --entrypoint python \
-            --user $(id -u):$(id -g) \
-            -v ${{ github.workspace }}:/workspace \
-            public.ecr.aws/lambda/python:3.13 \
-            -m pip install -r /workspace/requirements.txt -t /workspace/package/
+      - name: Install production dependencies into package/
+        run: pip install -r requirements.txt -t package/
 
       - name: Copy app code into package/
         run: |
@@ -66,10 +53,11 @@ jobs:
           cd package
           zip -r ../lambda.zip .
 
-      - name: Configure AWS credentials via OIDC
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Deploy to Lambda
