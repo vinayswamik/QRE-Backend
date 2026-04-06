@@ -3,17 +3,16 @@ name: Deploy to AWS Lambda
 on:
   workflow_dispatch:
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   deploy:
     name: Deploy to Lambda
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
 
       - name: Build deployment package inside Lambda-compatible container
         run: |
@@ -33,15 +32,18 @@ jobs:
           cd package
           zip -r ../lambda.zip .
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Upload zip to S3
+        run: aws s3 cp lambda.zip s3://${{ secrets.AWS_DEPLOY_BUCKET }}/lambda.zip
 
       - name: Deploy to Lambda
         run: |
           aws lambda update-function-code \
             --function-name qre-backend \
-            --zip-file fileb://lambda.zip
+            --s3-bucket ${{ secrets.AWS_DEPLOY_BUCKET }} \
+            --s3-key lambda.zip
