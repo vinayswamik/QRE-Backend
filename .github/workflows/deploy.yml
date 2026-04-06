@@ -9,6 +9,7 @@ on:
       - 'handler.py'
       - 'requirements.txt'
       - 'vendors.json'
+  workflow_dispatch:
 
 permissions:
   contents: read
