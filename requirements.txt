@@ -4,4 +4,4 @@ pydantic>=2.12.5
 pydantic-settings>=2.13.1
 pyqasm>=1.0.1
 mangum>=0.21.0
-qsharp>=1.27.0
+qsharp==1.27.0

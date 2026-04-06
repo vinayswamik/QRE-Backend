@@ -14,18 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build deployment package inside Lambda-compatible container
+      - name: Build deployment package
         run: |
-          docker run --rm \
-            --entrypoint bash \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
-            public.ecr.aws/lambda/python:3.13 \
-            -c "
-              pip install -r requirements.txt -t package/ &&
-              cp -r app package/ &&
-              cp handler.py package/
-            "
+          pip install --upgrade pip
+          pip install -r requirements.txt -t package/
+          cp -r app package/
+          cp handler.py package/
 
       - name: Create deployment zip
         run: |
