@@ -7,6 +7,12 @@ permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: us-east-1
+  FUNCTION_NAME: qre-backend
+  ECR_REPOSITORY: qre-backend
+  LAMBDA_ROLE: arn:aws:iam::149051628500:role/qre-lambda-role
+
 jobs:
   deploy:
     name: Deploy to Lambda
@@ -14,30 +20,75 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build deployment package
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt -t package/
-          cp -r app package/
-          cp handler.py package/
-
-      - name: Create deployment zip
-        run: |
-          cd package
-          zip -r ../lambda.zip .
-
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Upload zip to S3
-        run: aws s3 cp lambda.zip s3://${{ secrets.AWS_DEPLOY_BUCKET }}/lambda.zip
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Deploy to Lambda
+      - name: Build and push Docker image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          aws lambda update-function-code \
-            --function-name qre-backend \
-            --s3-bucket ${{ secrets.AWS_DEPLOY_BUCKET }} \
-            --s3-key lambda.zip
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}"
+          docker build --platform linux/amd64 -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+      - name: Deploy Lambda (handles Zip→Image migration automatically)
+        env:
+          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+        run: |
+          PACKAGE_TYPE=$(aws lambda get-function-configuration \
+            --function-name $FUNCTION_NAME \
+            --query PackageType --output text 2>/dev/null || echo "NOT_FOUND")
+
+          if [ "$PACKAGE_TYPE" = "Zip" ]; then
+            echo "Zip-based Lambda detected — deleting and recreating as Image..."
+            aws lambda delete-function --function-name $FUNCTION_NAME
+            aws lambda create-function \
+              --function-name $FUNCTION_NAME \
+              --package-type Image \
+              --code ImageUri="$IMAGE_URI" \
+              --role $LAMBDA_ROLE \
+              --memory-size 1024 \
+              --timeout 60
+            aws lambda wait function-active --function-name $FUNCTION_NAME
+
+          elif [ "$PACKAGE_TYPE" = "NOT_FOUND" ]; then
+            echo "Function not found — creating..."
+            aws lambda create-function \
+              --function-name $FUNCTION_NAME \
+              --package-type Image \
+              --code ImageUri="$IMAGE_URI" \
+              --role $LAMBDA_ROLE \
+              --memory-size 1024 \
+              --timeout 60
+            aws lambda wait function-active --function-name $FUNCTION_NAME
+
+          else
+            echo "Image-based Lambda — updating code..."
+            aws lambda update-function-code \
+              --function-name $FUNCTION_NAME \
+              --image-uri "$IMAGE_URI"
+            aws lambda wait function-updated --function-name $FUNCTION_NAME
+          fi
+
+      - name: Re-attach API Gateway permission (first deploy only)
+        env:
+          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+        run: |
+          # Add resource-based policy so API Gateway can invoke Lambda.
+          # The 'add-permission' call is idempotent via --statement-id.
+          aws lambda add-permission \
+            --function-name $FUNCTION_NAME \
+            --statement-id api-gateway-invoke \
+            --action lambda:InvokeFunction \
+            --principal apigateway.amazonaws.com \
+            --source-arn "arn:aws:execute-api:$AWS_REGION:149051628500:2gs291cjg2/*" \
+          2>/dev/null || echo "Permission already exists — skipping"
