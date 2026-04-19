@@ -212,6 +212,35 @@ Additional enriched fields are also returned (for example algorithmic logical de
 
 ---
 
+### `POST /api/v1/qasm/analyze/stream`
+
+Streaming variant of `/analyze` using Server-Sent Events (SSE).
+
+- Same request body as `POST /api/v1/qasm/analyze`.
+- Returns `text/event-stream` and emits progress as each vendor completes.
+- Event types: `stage`, `circuit_metadata`, `vendor_result`, `complete`, `error`.
+
+Useful when the frontend wants incremental progress instead of waiting for the full vendor map.
+
+---
+
+### `GET /api/v1/qasm/limits`
+
+Return backend-enforced input caps so clients can pre-validate before hitting rate-limited endpoints.
+
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `max_qasm_bytes` | `int` | Maximum request QASM size in bytes |
+| `max_qubits` | `int` | Maximum allowed circuit qubits |
+| `max_gate_count` | `int` | Maximum allowed circuit gate count |
+| `max_circuit_depth` | `int` | Maximum allowed circuit depth |
+
+When `validate`/`analyze` exceed structural caps, the API returns HTTP `413` with structured detail.
+
+---
+
 ### `GET /api/v1/qasm/vendor-defaults`
 
 Return raw vendor defaults (the `vendors.json` source of truth), used by clients to seed override UIs.
@@ -318,6 +347,12 @@ RATE_LIMIT_ENABLED=true
 RATE_LIMIT_WINDOW_SECONDS=60
 RATE_LIMIT_VALIDATE_REQUESTS=500
 RATE_LIMIT_ANALYZE_REQUESTS=200
+
+# Input-size and structural circuit caps
+MAX_QASM_BYTES=10000000
+MAX_QUBITS=200
+MAX_GATE_COUNT=2000000
+MAX_CIRCUIT_DEPTH=500000
 ```
 
 ---
@@ -326,7 +361,7 @@ RATE_LIMIT_ANALYZE_REQUESTS=200
 
 ```text
 app/
-  api/v1/routes/qasm.py         # /validate, /analyze, /vendor-defaults
+  api/v1/routes/qasm.py         # /validate, /analyze, /analyze/stream, /limits, /vendor-defaults
   core/config.py                # pydantic settings (CORS, app name/version, debug, rate limits)
   core/rate_limit.py            # in-memory per-client endpoint throttling
   core/vendors.json             # vendor hardware and QEC source-of-truth
