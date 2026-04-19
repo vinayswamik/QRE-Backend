@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.config import settings
+
 
 class QasmValidateRequest(BaseModel):
     """Payload for the /qasm/validate endpoint."""
@@ -11,7 +13,7 @@ class QasmValidateRequest(BaseModel):
     code: str = Field(
         ...,
         min_length=1,
-        max_length=100_000,
+        max_length=settings.MAX_QASM_BYTES,
         description="OpenQASM source code to validate",
     )
 
@@ -85,7 +87,7 @@ class QasmAnalyzeRequest(BaseModel):
     code: str = Field(
         ...,
         min_length=1,
-        max_length=100_000,
+        max_length=settings.MAX_QASM_BYTES,
         description="OpenQASM source code to analyze",
     )
     vendor_overrides: dict[str, VendorOverride] | None = Field(

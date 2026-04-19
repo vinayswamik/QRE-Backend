@@ -210,8 +210,10 @@ class TestRequestValidation:
         assert resp.status_code in (200, 422)
 
     def test_code_exceeding_max_length_returns_422(self):
-        """Code strings longer than 100,000 chars should be rejected."""
-        resp = client.post(ENDPOINT, json={"code": "x" * 100_001})
+        """Code strings longer than MAX_QASM_BYTES should be rejected by Pydantic."""
+        from app.core.config import settings
+
+        resp = client.post(ENDPOINT, json={"code": "x" * (settings.MAX_QASM_BYTES + 1)})
         assert resp.status_code == 422
 
 

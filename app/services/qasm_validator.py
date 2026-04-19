@@ -7,7 +7,6 @@ from collections import Counter
 from io import StringIO
 
 import pyqasm
-from openqasm3.ast import QuantumGate, QuantumPhase
 from pyqasm.exceptions import (
     QASM3ParsingError,
     QasmParsingError,
@@ -21,6 +20,7 @@ from app.models.qasm import (
     QasmValidateResponse,
     VendorEstimateResult,
 )
+from app.services.circuit_metrics import check_size_limits, parse_circuit_metrics
 from app.services.quantum_estimator import QuantumEstimator
 
 _estimator = QuantumEstimator()
@@ -110,43 +110,6 @@ def _classify_gate(num_qubits: int) -> str:
     return "Toffoli"
 
 
-def _parse_gate_counts(code: str) -> tuple[int, Counter, dict[str, int], int]:
-    module = pyqasm.loads(code)
-    module.unroll()
-    module.remove_barriers()
-
-    total_qubits = max(module.num_qubits, 1)
-    try:
-        circuit_depth = module.depth()
-    except ValidationError:
-        # pyqasm depth() can reject QASM2 programs containing QuantumPhase after
-        # unroll; drop non-physical phase/no-op lines and recompute depth from
-        # a cleaned pyqasm module.
-        cleaned_lines = []
-        for line in str(module).splitlines():
-            stripped = line.strip()
-            if stripped.startswith("gphase(") or stripped.startswith("nop "):
-                continue
-            cleaned_lines.append(line)
-        cleaned_module = pyqasm.loads("\n".join(cleaned_lines))
-        cleaned_module.unroll()
-        cleaned_module.remove_barriers()
-        circuit_depth = cleaned_module.depth()
-
-    gate_counter: Counter = Counter()
-    gate_qubit_map: dict[str, int] = {}
-    for stmt in module.unrolled_ast.statements:
-        if isinstance(stmt, QuantumGate):
-            name = stmt.name.name.lower()
-            gate_counter[name] += 1
-            gate_qubit_map[name] = len(stmt.qubits)
-        elif isinstance(stmt, QuantumPhase):
-            gate_counter["gphase"] += 1
-            gate_qubit_map["gphase"] = len(stmt.qubits)
-
-    return total_qubits, gate_counter, gate_qubit_map, circuit_depth
-
-
 def _build_gate_breakdown(
     gate_counter: Counter, gate_qubit_map: dict[str, int]
 ) -> tuple[list[GateCategoryBreakdown], int, int, int, int]:
@@ -190,7 +153,12 @@ def _build_gate_breakdown(
 
 
 def validate_qasm(code: str) -> QasmValidateResponse:
-    """Parse and semantically validate an OpenQASM program."""
+    """Parse and semantically validate an OpenQASM program.
+
+    On successful parse also enforces structural limits (qubits, gate count,
+    depth); violations propagate as CircuitTooLargeError for the route layer
+    to convert into a 413 response.
+    """
     pyqasm_logger = logging.getLogger("pyqasm")
     capture = _CapturingHandler()
     stashed_handlers = list(pyqasm_logger.handlers)
@@ -201,6 +169,8 @@ def validate_qasm(code: str) -> QasmValidateResponse:
         try:
             module = pyqasm.loads(code)
             module.validate()
+            qubits, gate_counter, _, depth = parse_circuit_metrics(code)
+            check_size_limits(qubits, sum(gate_counter.values()), depth)
             return QasmValidateResponse(valid=True, message="QASM code is valid")
         except (
             ValidationError,
@@ -238,14 +208,19 @@ def analyze_qasm(
     vendor_overrides: dict[str, dict] | None = None,
     custom_vendors: dict[str, dict] | None = None,
 ) -> QasmAnalyzeResponse:
-    """Estimate quantum resources for the given circuit across all vendors."""
-    circuit_qubits, gate_counter, gate_qubit_map, circuit_depth = _parse_gate_counts(
+    """Estimate quantum resources for the given circuit across all vendors.
+
+    Enforces structural size caps before touching the estimator so oversized
+    circuits fail fast with CircuitTooLargeError instead of OOM/timeout.
+    """
+    circuit_qubits, gate_counter, gate_qubit_map, circuit_depth = parse_circuit_metrics(
         code
     )
     gate_breakdown, n_1q, n_2q, n_toffoli, _ = _build_gate_breakdown(
         gate_counter, gate_qubit_map
     )
     circuit_gates = n_1q + n_2q + n_toffoli
+    check_size_limits(circuit_qubits, circuit_gates, circuit_depth)
 
     raw_results = _estimator.estimate(
         code,

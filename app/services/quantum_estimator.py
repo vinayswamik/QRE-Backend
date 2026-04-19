@@ -43,9 +43,9 @@ import copy
 import hashlib
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import pyqasm
 from qsharp.estimator import EstimatorParams
@@ -514,6 +514,81 @@ class QuantumEstimator:
 
         # Resolve in original vendor order, not completion order
         return {name: fut.result() for name, fut in futures.items()}
+
+    def estimate_streaming(
+        self,
+        qasm_str: str,
+        overrides: dict[str, dict] | None = None,
+        custom_vendors: dict[str, dict] | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Yield progress events for a streaming resource estimation.
+
+        Event shapes (all dicts, suitable for JSON serialization):
+
+            {"type": "stage", "stage": "preprocessing"}
+            {"type": "stage", "stage": "estimating", "total_vendors": N}
+            {"type": "vendor_result", "vendor": name, "completed": k,
+             "total": N, "result": {...}}
+            {"type": "complete", "vendors": {name: {...}, ...}}
+
+        Events arrive as each vendor's future resolves, so the consumer sees
+        progress well before the full response is ready.
+        """
+        yield {"type": "stage", "stage": "preprocessing"}
+        if qasm_str not in self._preprocess_cache:
+            self._preprocess_cache[qasm_str] = self._preprocess(qasm_str)
+        processed = self._preprocess_cache[qasm_str]
+        overrides = overrides or {}
+        custom_vendors = custom_vendors or {}
+
+        collisions = set(custom_vendors) & set(self.vendors)
+        if collisions:
+            raise ValueError(
+                "Custom vendor names collide with built-in vendors: "
+                + ", ".join(sorted(collisions))
+            )
+
+        active: list[tuple[str, dict, bool]] = []
+        for name, info in self.vendors.items():
+            if not info.get("available", True):
+                continue
+            if name in overrides:
+                merged = self._merge_override(info, overrides[name])
+                active.append((name, merged, False))
+            else:
+                active.append((name, info, True))
+        for name, info in custom_vendors.items():
+            active.append((name, info, False))
+
+        total = len(active)
+        yield {"type": "stage", "stage": "estimating", "total_vendors": total}
+
+        results: dict[str, dict] = {}
+        with ThreadPoolExecutor(max_workers=total or 1) as pool:
+            future_to_name = {
+                pool.submit(
+                    self._run_vendor_estimate, name, info, processed, is_default
+                ): name
+                for name, info, is_default in active
+            }
+            completed = 0
+            for fut in as_completed(future_to_name):
+                name = future_to_name[fut]
+                result = fut.result()
+                results[name] = result
+                completed += 1
+                yield {
+                    "type": "vendor_result",
+                    "vendor": name,
+                    "completed": completed,
+                    "total": total,
+                    "result": result,
+                }
+
+        # Preserve the original vendor ordering on the final payload so the
+        # frontend can render a stable list regardless of completion order.
+        ordered = {name: results[name] for name, _, _ in active if name in results}
+        yield {"type": "complete", "vendors": ordered}
 
     def pause_vendor(self, *names: str) -> None:
         """
