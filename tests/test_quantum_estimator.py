@@ -9,6 +9,7 @@ Tests the estimator class directly (not via the HTTP endpoint):
   5. Caching behaviour
   6. Threshold detection
 """
+# pylint: disable=missing-function-docstring
 
 import json
 from pathlib import Path
@@ -207,8 +208,6 @@ class TestEstimationOutput:
             assert isinstance(r["runtime"], str)
             assert isinstance(r["physical_qubits"], int)
             assert r["physical_qubits"] > 0
-            assert isinstance(r["total_logical_gates"], int)
-            assert r["total_logical_gates"] >= 0
             assert isinstance(r["logical_error_rate"], float)
 
     def test_above_threshold_result_schema(self):
@@ -303,3 +302,305 @@ class TestThresholdDetection:  # pylint: disable=protected-access
         k1 = QuantumEstimator._cache_key(vendor_info, "circuit_a")
         k2 = QuantumEstimator._cache_key(vendor_info, "circuit_b")
         assert k1 != k2
+
+
+# ---------------------------------------------------------------------------
+# 7. Vendor parameter overrides
+# ---------------------------------------------------------------------------
+
+
+class TestVendorOverrides:
+    # These tests intentionally probe private helpers to verify merge/hash behavior.
+    # pylint: disable=protected-access
+    """Per-call overrides should merge cleanly without mutating vendors.json."""
+
+    def test_merge_override_does_not_mutate_base(self):
+        """_merge_override should deep-copy so the base dict is untouched."""
+        base = {
+            "qubit_params": {"one_qubit_gate_error_rate": 1e-4},
+            "qec_scheme": {"error_correction_threshold": 0.01},
+            "max_code_distance": 50,
+        }
+        override = {"qubit_params": {"one_qubit_gate_error_rate": 5e-4}}
+        merged = QuantumEstimator._merge_override(base, override)
+        assert merged["qubit_params"]["one_qubit_gate_error_rate"] == 5e-4
+        assert base["qubit_params"]["one_qubit_gate_error_rate"] == 1e-4
+
+    def test_merge_override_updates_max_code_distance(self):
+        """max_code_distance override should propagate to the merged dict."""
+        base = {
+            "qubit_params": {},
+            "qec_scheme": {},
+            "max_code_distance": 50,
+        }
+        merged = QuantumEstimator._merge_override(base, {"max_code_distance": 25})
+        assert merged["max_code_distance"] == 25
+        assert base["max_code_distance"] == 50
+
+    def test_override_produces_different_cache_key(self):
+        """Overridden vendor info must hash to a different cache key than the default."""
+        est = QuantumEstimator()
+        vendor_name = "Google Willow"
+        default_info = est.vendors[vendor_name]
+        overridden = QuantumEstimator._merge_override(
+            default_info,
+            {"qubit_params": {"two_qubit_gate_error_rate": 1e-3}},
+        )
+        k_default = QuantumEstimator._cache_key(default_info, BELL_STATE)
+        k_override = QuantumEstimator._cache_key(overridden, BELL_STATE)
+        assert k_default != k_override
+
+    def test_estimate_accepts_overrides_and_respects_threshold(self):
+        """Pushing a vendor's error rate above threshold via override must flip its status."""
+        est = QuantumEstimator()
+        bad = {"qubit_params": {"two_qubit_gate_error_rate": 0.99}}
+        results = est.estimate(BELL_STATE, overrides={"Google Willow": bad})
+        g = results["Google Willow"]
+        assert g["status"] == "above_threshold"
+        # Other vendors should still run normally
+        other_statuses = {
+            r["status"] for k, r in results.items() if k != "Google Willow"
+        }
+        assert "success" in other_statuses or "error" in other_statuses
+
+    def test_estimate_runtime_seconds_field_present(self):
+        """runtime_seconds should be a positive float on successful runs."""
+        est = QuantumEstimator()
+        results = est.estimate(BELL_STATE)
+        success = [r for r in results.values() if r["status"] == "success"]
+        assert success, "expected at least one successful vendor for bell state"
+        for r in success:
+            assert isinstance(r["runtime_seconds"], float)
+            assert r["runtime_seconds"] > 0
+
+
+# ---------------------------------------------------------------------------
+# 8. Enriched Q# estimate fields
+# ---------------------------------------------------------------------------
+
+
+_T_CIRCUIT = """OPENQASM 3.0;
+include "stdgates.inc";
+qubit[3] q;
+bit[3] c;
+h q[0];
+cx q[0], q[1];
+t q[2];
+ccx q[0], q[1], q[2];
+c[0] = measure q[0];
+c[1] = measure q[1];
+c[2] = measure q[2];
+"""
+
+
+class TestEnrichedEstimateFields:
+    """The Q# raw result contains many vendor-differentiating fields beyond
+    the original four. _parse_raw_result should surface them all.
+    """
+
+    _REQUIRED_ENRICHED_FIELDS = (
+        "rqops",
+        "clock_frequency",
+        "code_distance",
+        "physical_qubits_for_algorithm",
+        "physical_qubits_for_tfactories",
+        "algorithmic_logical_qubits",
+        "algorithmic_logical_depth",
+        "logical_depth",
+        "num_tstates",
+        "num_tfactories",
+        "num_tfactory_runs",
+        "required_logical_qubit_error_rate",
+        "required_logical_tstate_error_rate",
+        "clifford_error_rate",
+        "logical_cycle_time_ns",
+        "tfactory_physical_qubits",
+        "tfactory_runtime_seconds",
+        "tfactory_num_rounds",
+        "formatted",
+    )
+
+    def test_all_enriched_fields_present_on_success(self):
+        est = QuantumEstimator()
+        results = est.estimate(_T_CIRCUIT)
+        success = [r for r in results.values() if r["status"] == "success"]
+        assert success, "expected at least one vendor to succeed on T-circuit"
+        for r in success:
+            for field in self._REQUIRED_ENRICHED_FIELDS:
+                assert field in r, f"{field} missing from success result"
+
+    def test_code_distance_differs_across_vendors(self):
+        est = QuantumEstimator()
+        results = est.estimate(_T_CIRCUIT)
+        distances = {
+            name: r["code_distance"]
+            for name, r in results.items()
+            if r["status"] == "success"
+        }
+        assert len(distances) >= 2
+        assert len(set(distances.values())) > 1, (
+            "expected code_distance to vary across vendors, " f"got {distances}"
+        )
+
+    def test_qubit_budget_split_adds_up(self):
+        est = QuantumEstimator()
+        results = est.estimate(_T_CIRCUIT)
+        for r in results.values():
+            if r["status"] != "success":
+                continue
+            assert (
+                r["physical_qubits_for_algorithm"] + r["physical_qubits_for_tfactories"]
+                == r["physical_qubits"]
+            )
+
+    def test_formatted_dict_is_populated(self):
+        est = QuantumEstimator()
+        results = est.estimate(_T_CIRCUIT)
+        for r in results.values():
+            if r["status"] != "success":
+                continue
+            assert isinstance(r["formatted"], dict)
+            assert "runtime" in r["formatted"]
+            assert "rqops" in r["formatted"]
+
+
+# ---------------------------------------------------------------------------
+# 9. Failure reasons: above_threshold reports the specific failing field
+# ---------------------------------------------------------------------------
+
+
+class TestAboveThresholdReason:
+    """When hardware error rates exceed the QEC threshold, the result must
+    name the specific offending field so the user knows what to fix.
+    """
+
+    def test_above_threshold_includes_failing_field(self):
+        est = QuantumEstimator()
+        results = est.estimate(
+            BELL_STATE,
+            overrides={
+                "Google Willow": {"qubit_params": {"two_qubit_gate_error_rate": 0.5}}
+            },
+        )
+        r = results["Google Willow"]
+        assert r["status"] == "above_threshold"
+        assert r["failing_field"] == "two_qubit_gate_error_rate"
+        assert r["failing_value"] == 0.5
+        assert "two_qubit_gate_error_rate" in r["detail"]
+        assert "surface_code" in r["detail"]
+
+    def test_first_failing_field_wins(self):
+        """If multiple error rates are over threshold, the first one
+        encountered in _ERROR_RATE_KEYS order is reported.
+        """
+        est = QuantumEstimator()
+        results = est.estimate(
+            BELL_STATE,
+            overrides={
+                "Google Willow": {
+                    "qubit_params": {
+                        "one_qubit_gate_error_rate": 0.5,
+                        "two_qubit_gate_error_rate": 0.5,
+                    }
+                }
+            },
+        )
+        r = results["Google Willow"]
+        assert r["failing_field"] == "one_qubit_gate_error_rate"
+
+
+# ---------------------------------------------------------------------------
+# 10. Custom vendors
+# ---------------------------------------------------------------------------
+
+
+def _valid_custom_spec(**overrides):
+    spec = {
+        "processor": "Lab 9000",
+        "technology": "Exotic",
+        "year": 2026,
+        "source": "internal",
+        "qubit_params": {
+            "name": "mylab",
+            "instruction_set": "GateBased",
+            "one_qubit_gate_time": "10 ns",
+            "two_qubit_gate_time": "20 ns",
+            "one_qubit_measurement_time": "200 ns",
+            "one_qubit_gate_error_rate": 1e-4,
+            "two_qubit_gate_error_rate": 1e-3,
+            "one_qubit_measurement_error_rate": 1e-3,
+            "t_gate_time": "10 ns",
+            "t_gate_error_rate": 1e-4,
+            "idle_error_rate": 1e-5,
+        },
+        "qec_scheme": {
+            "name": "surface_code",
+            "crossing_prefactor": 0.03,
+            "error_correction_threshold": 0.01,
+            "distance_coefficient_power": 0,
+            "logical_cycle_time": (
+                "(4 * twoQubitGateTime + 2 * oneQubitMeasurementTime) * codeDistance"
+            ),
+            "physical_qubits_per_logical_qubit": "2 * codeDistance * codeDistance",
+        },
+        "max_code_distance": 500,
+    }
+    spec.update(overrides)
+    return spec
+
+
+class TestCustomVendors:
+    """Custom vendors flow through the same estimation pipeline as built-ins."""
+
+    def test_custom_vendor_round_trip(self):
+        est = QuantumEstimator()
+        results = est.estimate(
+            _T_CIRCUIT,
+            custom_vendors={"MyLab QPU": _valid_custom_spec()},
+        )
+        assert "MyLab QPU" in results
+        r = results["MyLab QPU"]
+        assert r["status"] == "success"
+        assert r["processor"] == "Lab 9000"
+        assert r["code_distance"] > 0
+
+    def test_custom_vendor_name_collision_raises(self):
+        est = QuantumEstimator()
+        with pytest.raises(ValueError, match="collide"):
+            est.estimate(
+                BELL_STATE,
+                custom_vendors={"Google Willow": _valid_custom_spec()},
+            )
+
+    def test_custom_vendor_with_bad_rate_reports_above_threshold(self):
+        est = QuantumEstimator()
+        bad_spec = _valid_custom_spec()
+        bad_spec["qubit_params"]["two_qubit_gate_error_rate"] = 0.5
+        results = est.estimate(BELL_STATE, custom_vendors={"BadLab": bad_spec})
+        r = results["BadLab"]
+        assert r["status"] == "above_threshold"
+        assert r["failing_field"] == "two_qubit_gate_error_rate"
+
+    def test_custom_vendor_missing_field_reports_error_with_reason(self):
+        est = QuantumEstimator()
+        spec = _valid_custom_spec()
+        del spec["qubit_params"]["one_qubit_gate_time"]
+        results = est.estimate(BELL_STATE, custom_vendors={"Broken": spec})
+        r = results["Broken"]
+        assert r["status"] == "error"
+        assert "one_qubit_gate_time" in r["detail"]
+
+    def test_custom_vendor_out_of_range_error_rate(self):
+        est = QuantumEstimator()
+        spec = _valid_custom_spec()
+        spec["qubit_params"]["one_qubit_gate_error_rate"] = 2.0
+        results = est.estimate(BELL_STATE, custom_vendors={"OutOfRange": spec})
+        r = results["OutOfRange"]
+        assert r["status"] == "error"
+        assert "one_qubit_gate_error_rate" in r["detail"]
+
+    def test_custom_vendors_do_not_mutate_self_vendors(self):
+        est = QuantumEstimator()
+        before = set(est.vendors)
+        est.estimate(BELL_STATE, custom_vendors={"Transient": _valid_custom_spec()})
+        assert set(est.vendors) == before

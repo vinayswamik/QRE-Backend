@@ -6,6 +6,8 @@ module = ["qsharp.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
 filterwarnings = [
     "ignore::DeprecationWarning:mangum",
 ]

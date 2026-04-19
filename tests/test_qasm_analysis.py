@@ -8,8 +8,7 @@ The API returns:
 
 Each vendor result has:
   - Always: status, processor, technology, year (nullable), source
-  - success: qec_scheme, runtime, physical_qubits, total_logical_gates,
-    logical_error_rate
+  - success: qec_scheme, runtime, physical_qubits, logical_error_rate
   - not_available: reason
   - above_threshold / error: qec_scheme, detail
 
@@ -23,6 +22,7 @@ Test categories:
   7. Parameterized circuit corpus (algorithms, gate types, scales, QASM versions)
   8. Request validation edge cases
 """
+# pylint: disable=missing-function-docstring,duplicate-code
 
 import pytest
 from fastapi.testclient import TestClient
@@ -484,10 +484,6 @@ class TestSuccessVendors:
             assert (
                 isinstance(v["physical_qubits"], int) and v["physical_qubits"] > 0
             ), f"{name}: bad physical_qubits"
-            assert (
-                isinstance(v["total_logical_gates"], int)
-                and v["total_logical_gates"] >= 0
-            ), f"{name}: bad total_logical_gates"
             assert isinstance(
                 v["logical_error_rate"], float
             ), f"{name}: bad logical_error_rate"
@@ -601,9 +597,6 @@ class TestCircuitCorpus:
                 ), f"{circuit_id}: physical_qubits missing or zero"
                 assert v["runtime"] is not None, f"{circuit_id}: runtime missing"
                 assert (
-                    v["total_logical_gates"] is not None
-                ), f"{circuit_id}: total_logical_gates missing"
-                assert (
                     v["logical_error_rate"] is not None
                 ), f"{circuit_id}: logical_error_rate missing"
                 assert v["qec_scheme"] is not None, f"{circuit_id}: qec_scheme missing"
@@ -684,3 +677,236 @@ class TestAnalyzeRequestValidation:
         """Code strings longer than 100,000 chars should be rejected."""
         resp = client.post(ENDPOINT, json={"code": "x" * 100_001})
         assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# 9. Route-level vendor overrides (A2) and runtime_seconds (A1)
+# ---------------------------------------------------------------------------
+
+
+BELL_CODE = CIRCUITS[0][1]
+
+
+class TestRuntimeSecondsField:
+    """A1: /analyze must include a numeric runtime_seconds on successful vendors."""
+
+    def test_runtime_seconds_present_on_success(self):
+        data = post_analyze(BELL_CODE).json()
+        successes = [v for v in data["vendors"].values() if v["status"] == "success"]
+        assert successes
+        for v in successes:
+            assert isinstance(v["runtime_seconds"], float)
+            assert v["runtime_seconds"] > 0
+            assert isinstance(v["runtime"], str)
+            assert v["runtime"]
+
+
+class TestAnalyzeVendorOverrides:
+    """A2: POST body may include vendor_overrides merged over vendors.json defaults."""
+
+    def test_override_above_threshold_flips_status(self):
+        """Pushing a vendor's two-qubit error rate above threshold should flip its status."""
+        body = {
+            "code": BELL_CODE,
+            "vendor_overrides": {
+                "Google Willow": {
+                    "qubit_params": {"two_qubit_gate_error_rate": 0.99},
+                }
+            },
+        }
+        resp = client.post(ENDPOINT, json=body)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["vendors"]["Google Willow"]["status"] == "above_threshold"
+
+    def test_override_other_vendors_unaffected(self):
+        """Override on one vendor must not change results for the others."""
+        baseline = post_analyze(BELL_CODE).json()["vendors"]
+        body = {
+            "code": BELL_CODE,
+            "vendor_overrides": {
+                "Google Willow": {"qubit_params": {"two_qubit_gate_error_rate": 0.99}}
+            },
+        }
+        overridden = client.post(ENDPOINT, json=body).json()["vendors"]
+        for name, base_v in baseline.items():
+            if name == "Google Willow":
+                continue
+            assert overridden[name]["status"] == base_v["status"]
+
+    def test_unknown_override_field_rejected(self):
+        """Unknown fields inside VendorOverride should fail Pydantic validation."""
+        body = {
+            "code": BELL_CODE,
+            "vendor_overrides": {"Google Willow": {"not_a_real_section": {"foo": 1}}},
+        }
+        resp = client.post(ENDPOINT, json=body)
+        assert resp.status_code == 422
+
+
+_VALID_CUSTOM_VENDOR = {
+    "processor": "Lab 9000",
+    "technology": "Exotic",
+    "year": 2026,
+    "source": "internal",
+    "qubit_params": {
+        "name": "mylab",
+        "instruction_set": "GateBased",
+        "one_qubit_gate_time": "10 ns",
+        "two_qubit_gate_time": "20 ns",
+        "one_qubit_measurement_time": "200 ns",
+        "one_qubit_gate_error_rate": 1e-4,
+        "two_qubit_gate_error_rate": 1e-3,
+        "one_qubit_measurement_error_rate": 1e-3,
+        "t_gate_time": "10 ns",
+        "t_gate_error_rate": 1e-4,
+        "idle_error_rate": 1e-5,
+    },
+    "qec_scheme": {
+        "name": "surface_code",
+        "crossing_prefactor": 0.03,
+        "error_correction_threshold": 0.01,
+        "distance_coefficient_power": 0,
+        "logical_cycle_time": "(4 * twoQubitGateTime + 2 * oneQubitMeasurementTime) * codeDistance",
+        "physical_qubits_per_logical_qubit": "2 * codeDistance * codeDistance",
+    },
+    "max_code_distance": 500,
+}
+
+_T_CIRCUIT_QASM = """OPENQASM 3.0;
+include "stdgates.inc";
+qubit[3] q;
+bit[3] c;
+h q[0];
+cx q[0], q[1];
+t q[2];
+ccx q[0], q[1], q[2];
+c[0] = measure q[0];
+c[1] = measure q[1];
+c[2] = measure q[2];
+"""
+
+
+class TestEnrichedResponse:
+    """The API response should surface enriched Q# fields alongside the
+    original four per successful vendor."""
+
+    def test_success_vendor_includes_code_distance(self):
+        resp = client.post(ENDPOINT, json={"code": _T_CIRCUIT_QASM})
+        assert resp.status_code == 200
+        vendors = resp.json()["vendors"]
+        success = [v for v in vendors.values() if v["status"] == "success"]
+        assert success
+        for v in success:
+            assert "code_distance" in v and v["code_distance"] is not None
+            assert "rqops" in v and v["rqops"] is not None
+            assert "physical_qubits_for_algorithm" in v
+            assert "physical_qubits_for_tfactories" in v
+            assert "formatted" in v and isinstance(v["formatted"], dict)
+
+    def test_above_threshold_response_includes_failing_field(self):
+        resp = client.post(
+            ENDPOINT,
+            json={
+                "code": _T_CIRCUIT_QASM,
+                "vendor_overrides": {
+                    "Google Willow": {
+                        "qubit_params": {"two_qubit_gate_error_rate": 0.5}
+                    }
+                },
+            },
+        )
+        assert resp.status_code == 200
+        r = resp.json()["vendors"]["Google Willow"]
+        assert r["status"] == "above_threshold"
+        assert r["failing_field"] == "two_qubit_gate_error_rate"
+        assert r["failing_value"] == 0.5
+        assert "two_qubit_gate_error_rate" in r["detail"]
+
+
+class TestCustomVendorsEndpoint:
+    """The /analyze endpoint should accept up to 8 custom vendors."""
+
+    def test_single_custom_vendor_succeeds(self):
+        resp = client.post(
+            ENDPOINT,
+            json={
+                "code": _T_CIRCUIT_QASM,
+                "custom_vendors": {"MyLab QPU": _VALID_CUSTOM_VENDOR},
+            },
+        )
+        assert resp.status_code == 200
+        v = resp.json()["vendors"]["MyLab QPU"]
+        assert v["status"] == "success"
+        assert v["processor"] == "Lab 9000"
+
+    def test_more_than_three_custom_vendors_rejected(self):
+        four = {f"Custom {i}": _VALID_CUSTOM_VENDOR for i in range(4)}
+        resp = client.post(
+            ENDPOINT,
+            json={"code": _T_CIRCUIT_QASM, "custom_vendors": four},
+        )
+        assert resp.status_code == 422
+        assert "at most 3" in resp.text.lower()
+
+    def test_exactly_three_custom_vendors_accepted(self):
+        three = {f"Custom {i}": _VALID_CUSTOM_VENDOR for i in range(3)}
+        resp = client.post(
+            ENDPOINT,
+            json={"code": _T_CIRCUIT_QASM, "custom_vendors": three},
+        )
+        assert resp.status_code == 200
+        for i in range(3):
+            assert f"Custom {i}" in resp.json()["vendors"]
+
+    def test_custom_vendor_colliding_with_builtin_rejected(self):
+        resp = client.post(
+            ENDPOINT,
+            json={
+                "code": _T_CIRCUIT_QASM,
+                "custom_vendors": {"Google Willow": _VALID_CUSTOM_VENDOR},
+            },
+        )
+        assert resp.status_code == 422
+        assert "collide" in resp.text.lower()
+
+    def test_custom_vendor_missing_required_top_field_rejected(self):
+        bad = {k: v for k, v in _VALID_CUSTOM_VENDOR.items() if k != "processor"}
+        resp = client.post(
+            ENDPOINT,
+            json={"code": _T_CIRCUIT_QASM, "custom_vendors": {"MyLab": bad}},
+        )
+        assert resp.status_code == 422
+
+    def test_custom_vendor_bad_qubit_spec_returns_error_status(self):
+        spec = {**_VALID_CUSTOM_VENDOR}
+        spec["qubit_params"] = {
+            k: v for k, v in spec["qubit_params"].items() if k != "one_qubit_gate_time"
+        }
+        resp = client.post(
+            ENDPOINT,
+            json={"code": _T_CIRCUIT_QASM, "custom_vendors": {"Broken": spec}},
+        )
+        assert resp.status_code == 200
+        v = resp.json()["vendors"]["Broken"]
+        assert v["status"] == "error"
+        assert "one_qubit_gate_time" in v["detail"]
+
+
+class TestVendorDefaultsEndpoint:
+    """D3: /vendor-defaults returns the raw vendors.json map."""
+
+    def test_returns_all_vendors(self):
+        resp = client.get("/api/v1/qasm/vendor-defaults")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(AVAILABLE_VENDORS).issubset(set(data.keys()))
+
+    def test_each_available_vendor_has_qubit_params_and_qec_scheme(self):
+        data = client.get("/api/v1/qasm/vendor-defaults").json()
+        for name in AVAILABLE_VENDORS:
+            entry = data[name]
+            assert "qubit_params" in entry
+            assert "qec_scheme" in entry
+            assert entry["qubit_params"]
+            assert entry["qec_scheme"]

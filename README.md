@@ -1,20 +1,36 @@
 # QRE Backend
 
-**Quantum Resource Estimator** — a REST API for validating and analyzing OpenQASM quantum circuits. Submit a QASM 2.0 or 3.0 program and receive validated syntax plus fault-tolerant physical resource estimates across real quantum hardware vendors, each modeled with its own error correction scheme and published hardware parameters.
+QRE Backend is a FastAPI service for validating and analyzing OpenQASM 2.0/3.0 circuits.
+It combines `pyqasm` parsing with Azure Quantum Resource Estimator (Q#) to return
+fault-tolerant physical resource estimates across multiple real hardware vendors.
+
+---
+
+## What This API Does
+
+- Validates QASM syntax and semantics with structured error diagnostics.
+- Analyzes gate counts, qubit count, and circuit depth.
+- Estimates fault-tolerant resources across vendor hardware profiles.
+- Supports per-request vendor parameter overrides.
+- Supports up to 3 custom user-defined vendors per request.
 
 ---
 
 ## Supported Vendors
 
+The backend currently estimates against these built-in active vendors:
+
 | Vendor | Processor | Technology | QEC Scheme |
 |---|---|---|---|
-| Google | Willow (105 qubits) | Superconducting (transmon) | Rotated Surface Code |
-| IBM | Heron R3 (156 qubits) | Superconducting (transmon, tunable coupler) | Bivariate Bicycle (QLDPC) |
-| IonQ | Tempo (64 qubits, all-to-all) | Trapped Ion (Yb-171) | Surface Code |
-| Quantinuum | Helios (96 qubits) | Trapped Ion (QCCD, Yb-171) | Color Code |
-| Rigetti | Ankaa-3 (36 qubits) | Superconducting | Surface Code |
-| Atom Computing | AC1000 (>1200 qubits) | Neutral Atom (Yb-171) | Surface Code |
-| QuEra | Gemini (260 qubits) | Neutral Atom (Rb-87, Rydberg) | Surface Code |
+| Google Willow | Willow (105 qubits) | Superconducting (transmon) | `surface_code` |
+| IBM Heron R3 | Heron R3 / ibm_boston (156 qubits) | Superconducting (transmon, tunable coupler) | `ibm_qldpc_bivariate_bicycle` |
+| Rigetti Ankaa-3 | Ankaa-3 (84 qubits) | Superconducting | `surface_code` |
+| IonQ Tempo | Tempo (100 qubits, #AQ 64, all-to-all) | Trapped Ion (Barium-137) | `surface_code` |
+| Quantinuum Helios | Helios (98 qubits, all-to-all via QCCD shuttling) | Trapped Ion (QCCD architecture, Ba-137, Yb-171 coolant) | `quantinuum_color_code` |
+| Atom Computing | AC1000 (>1200 qubits, Yb-171 nuclear-spin) | Neutral Atom (Ytterbium-171) | `surface_code` |
+| QuEra Gemini | Gemini (260 qubits, Rb-87, DQA shuttling) | Neutral Atom (Rubidium-87, Rydberg gates) | `surface_code` |
+
+Note: unavailable vendors listed in `app/core/vendors.json` are excluded from `/analyze` results.
 
 ---
 
@@ -22,11 +38,12 @@
 
 | Layer | Technology |
 |---|---|
-| Framework | FastAPI |
+| API Framework | FastAPI |
 | QASM Parsing | pyqasm |
 | Resource Estimation | Azure Quantum Resource Estimator (Q#) |
 | Runtime | Python 3.13 |
-| Deployment | AWS Lambda via Mangum |
+| AWS Runtime | Lambda (Mangum adapter) |
+| Config | Pydantic Settings |
 
 ---
 
@@ -34,204 +51,299 @@
 
 Base URL (local): `http://localhost:8000`
 
-Interactive docs: `/docs` (Swagger UI) · `/redoc` (ReDoc)
-
----
+Interactive docs:
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
 
 ### `POST /api/v1/qasm/validate`
 
-Validates an OpenQASM 2.0 or 3.0 program for syntax and semantic correctness.
+Validate an OpenQASM 2.0/3.0 program.
 
 **Request**
+
 ```json
 {
   "code": "OPENQASM 2.0;\ninclude \"qelib1.inc\";\nqreg q[2];\nh q[0];\ncx q[0],q[1];"
 }
 ```
 
-**Response — valid**
-```json
-{
-  "valid": true,
-  "message": "QASM code is valid",
-  "error_type": null
-}
-```
-
-**Response — invalid**
-```json
-{
-  "valid": false,
-  "message": "Qubit index out of range on line 5",
-  "error_type": "SemanticError"
-}
-```
+**Response fields**
 
 | Field | Type | Description |
 |---|---|---|
-| `valid` | `bool` | Whether the QASM code passed validation |
-| `message` | `string` | Human-readable result or error description |
-| `error_type` | `string \| null` | Exception class name when validation fails (e.g. `QasmParsingError`, `SemanticError`) |
+| `valid` | `bool` | Whether validation succeeded |
+| `message` | `string` | Human-readable success/failure message |
+| `error_type` | `string \| null` | Exception class for failures |
+| `line` | `int \| null` | 1-indexed error line when known |
+| `column` | `int \| null` | 0-indexed error column when known |
+| `snippet` | `string \| null` | Source line near the failure |
+| `hint` | `string \| null` | Friendly hint for the error class |
+
+**Example invalid response**
+
+```json
+{
+  "valid": false,
+  "message": "Qubit index out of range",
+  "error_type": "ValidationError",
+  "line": 4,
+  "column": 2,
+  "snippet": "h q[5];",
+  "hint": "Validation failed. Check register sizes, gate names, and argument counts."
+}
+```
 
 ---
 
 ### `POST /api/v1/qasm/analyze`
 
-Analyzes a circuit and returns per-vendor fault-tolerant physical resource estimates via Azure Quantum Resource Estimator.
+Analyze a circuit and estimate resources across active vendors.
 
-> Tip: run `/validate` first — this endpoint assumes the QASM is syntactically valid.
+The request supports:
+- `vendor_overrides`: patch selected fields (`qubit_params`, `qec_scheme`, `max_code_distance`) for built-in vendors.
+- `custom_vendors`: add up to 3 full vendor specs estimated alongside built-ins.
 
-**Request**
+**Request (full shape)**
+
 ```json
 {
-  "code": "OPENQASM 2.0;\ninclude \"qelib1.inc\";\nqreg q[2];\nh q[0];\ncx q[0],q[1];"
-}
-```
-
-**Response**
-```json
-{
-  "circuit_qubits": 2,
-  "circuit_gates": 2,
-  "circuit_depth": 2,
-  "gate_breakdown": [
-    {
-      "name": "1Q",
-      "value": 1,
-      "percentage": 50.0,
-      "gates": [
-        { "name": "h", "count": 1, "percentage": 50.0 }
-      ]
-    },
-    {
-      "name": "2Q",
-      "value": 1,
-      "percentage": 50.0,
-      "gates": [
-        { "name": "cx", "count": 1, "percentage": 50.0 }
-      ]
-    },
-    {
-      "name": "Toffoli",
-      "value": 0,
-      "percentage": 0.0,
-      "gates": []
-    }
-  ],
-  "vendors": {
-    // One entry for each of the 7 supported vendors (Google Willow, IBM Heron R3, IonQ Tempo,
-    // Quantinuum Helios, Rigetti Ankaa-3, Atom Computing, QuEra Gemini). Shown truncated below.
+  "code": "OPENQASM 3.0;\ninclude \"stdgates.inc\";\nqubit[2] q;\nbit[2] c;\nh q[0];\ncx q[0], q[1];\nc = measure q;",
+  "vendor_overrides": {
     "Google Willow": {
-      "status": "success",
-      "processor": "Willow (105 qubits)",
-      "technology": "Superconducting (transmon)",
-      "year": 2024,
-      "source": "Acharya et al., Nature 638 (2025)",
-      "qec_scheme": "surface_code",
-      "runtime": "10 microsecs",
-      "physical_qubits": 3750,
-      "total_logical_gates": 12,
-      "logical_error_rate": 2.3e-8
-    },
-    "IBM Heron R3": {
-      "status": "success",
-      "processor": "Heron R3 / ibm_boston (156 qubits)",
-      "technology": "Superconducting (transmon, tunable coupler)",
-      "year": 2025,
-      "source": "IBM QDC 2025",
-      "qec_scheme": "ibm_qldpc_bivariate_bicycle",
-      "runtime": "8 microsecs",
-      "physical_qubits": 2100,
-      "total_logical_gates": 12,
-      "logical_error_rate": 1.1e-8
-    },
+      "qubit_params": {
+        "two_qubit_gate_error_rate": 0.0015
+      },
+      "max_code_distance": 400
+    }
+  },
+  "custom_vendors": {
+    "MyLab QPU": {
+      "processor": "Lab 9000",
+      "technology": "Exotic",
+      "year": 2026,
+      "source": "internal",
+      "qubit_params": {
+        "name": "mylab",
+        "instruction_set": "GateBased",
+        "one_qubit_gate_time": "10 ns",
+        "two_qubit_gate_time": "20 ns",
+        "one_qubit_measurement_time": "200 ns",
+        "one_qubit_gate_error_rate": 0.0001,
+        "two_qubit_gate_error_rate": 0.001,
+        "one_qubit_measurement_error_rate": 0.001,
+        "t_gate_time": "10 ns",
+        "t_gate_error_rate": 0.0001,
+        "idle_error_rate": 0.00001
+      },
+      "qec_scheme": {
+        "name": "surface_code",
+        "crossing_prefactor": 0.03,
+        "error_correction_threshold": 0.01,
+        "distance_coefficient_power": 0,
+        "logical_cycle_time": "(4 * twoQubitGateTime + 2 * oneQubitMeasurementTime) * codeDistance",
+        "physical_qubits_per_logical_qubit": "2 * codeDistance * codeDistance"
+      },
+      "max_code_distance": 500
+    }
   }
 }
 ```
 
-#### Circuit Metadata Fields
+**Top-level response**
 
 | Field | Type | Description |
 |---|---|---|
-| `circuit_qubits` | `int` | Number of logical qubits in the circuit |
-| `circuit_gates` | `int` | Total gate count (excluding measurements and barriers) |
-| `circuit_depth` | `int` | Critical path length of the circuit |
-| `gate_breakdown` | `array` | Gate counts grouped into `1Q`, `2Q`, and `Toffoli` categories |
+| `circuit_qubits` | `int` | Number of logical qubits |
+| `circuit_gates` | `int` | Total physical gate count used by analysis |
+| `circuit_depth` | `int` | Circuit depth after preprocessing |
+| `gate_breakdown` | `array` | Categories `1Q`, `2Q`, `Toffoli` with detailed gate counts |
+| `vendors` | `object` | Map of vendor name to estimate result |
 
-#### Vendor Result Fields
-
-| Field | Type | Description |
-|---|---|---|
-| `status` | `string` | One of `success`, `not_available`, `above_threshold`, `error` |
-| `processor` | `string` | Vendor chip name and qubit count |
-| `technology` | `string` | Underlying qubit technology |
-| `year` | `int \| null` | Year of the hardware specification |
-| `source` | `string` | Primary literature or spec sheet reference |
-| `qec_scheme` | `string \| null` | Error correction scheme used *(success only)* |
-| `runtime` | `string \| null` | Estimated fault-tolerant wall-clock runtime *(success only)* |
-| `physical_qubits` | `int \| null` | Total physical qubits required including ancilla *(success only)* |
-| `total_logical_gates` | `int \| null` | Total logical gate operations after QEC compilation *(success only)* |
-| `logical_error_rate` | `float \| null` | Achieved logical error rate per operation *(success only)* |
-| `reason` | `string \| null` | Why estimation is unavailable *(not_available only)* |
-| `detail` | `string \| null` | Error message or threshold exceeded detail *(above_threshold / error only)* |
-
-#### Vendor Status Values
+**Vendor `status` values**
 
 | Status | Meaning |
 |---|---|
-| `success` | Estimation completed; full resource breakdown returned |
-| `not_available` | Vendor not supported (e.g. photonic, pre-release hardware) |
-| `above_threshold` | Physical error rate exceeds the QEC threshold for this vendor |
-| `error` | Estimation failed due to an unexpected error |
+| `success` | Estimation completed successfully |
+| `above_threshold` | A physical error rate exceeds the vendor QEC threshold |
+| `error` | Spec invalid or estimator failed |
+| `not_available` | Reserved status in schema (unavailable built-ins are currently excluded from `/analyze`) |
+
+**Common vendor fields**
+
+| Field | Type |
+|---|---|
+| `status` | `string` |
+| `processor` | `string` |
+| `technology` | `string` |
+| `year` | `int \| null` |
+| `source` | `string` |
+
+**`success` fields (selected)**
+
+| Field | Type |
+|---|---|
+| `qec_scheme` | `string` |
+| `runtime` | `string` |
+| `runtime_seconds` | `float` |
+| `physical_qubits` | `int` |
+| `logical_error_rate` | `float` |
+| `rqops` | `float` |
+| `clock_frequency` | `float` |
+| `code_distance` | `int` |
+| `physical_qubits_for_algorithm` | `int` |
+| `physical_qubits_for_tfactories` | `int` |
+| `formatted` | `object` |
+
+Additional enriched fields are also returned (for example algorithmic logical depth, T-factory metrics, required logical error rates).
+
+**`above_threshold` fields**
+
+| Field | Type |
+|---|---|
+| `detail` | `string` |
+| `failing_field` | `string` |
+| `failing_value` | `float` |
+
+**`error` fields**
+
+| Field | Type |
+|---|---|
+| `detail` | `string` |
+
+---
+
+### `GET /api/v1/qasm/vendor-defaults`
+
+Return raw vendor defaults (the `vendors.json` source of truth), used by clients to seed override UIs.
+
+Response type: `dict[str, dict]`
 
 ---
 
 ### `GET /health`
 
-Returns the service health and version.
+Service health/version probe.
 
 ```json
-{ "status": "ok", "version": "1.0.0" }
+{
+  "status": "ok",
+  "version": "1.0.0"
+}
 ```
 
 ---
 
 ## Local Development
 
-**Prerequisites:** Python 3.13
+### Prerequisites
+
+- Python 3.13
+- `pip`
+- Docker (only for local Lambda image testing)
+
+### Setup
 
 ```bash
 git clone <repo-url>
 cd QRE-Backend
 
-python3 -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
+python3 -m venv qre-env
+source qre-env/bin/activate
 
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
+```
 
+### Run API (hot reload)
+
+```bash
 uvicorn app.main:app --reload
 ```
 
-API available at `http://localhost:8000`
-Swagger UI at `http://localhost:8000/docs`
+Or via Make target:
+
+```bash
+make dev
+```
 
 ---
 
-## Running Tests
+## Testing
+
+Run Python tests:
 
 ```bash
 pytest
 ```
 
-The test suite covers:
-- QASM 2.0 and 3.0 validation (syntax errors, semantic errors, edge cases)
-- Circuit analysis for 17+ canonical circuits (Bell state, GHZ, QFT, Grover, VQE, QAOA, teleportation, and more)
-- Gate breakdown correctness and percentage sums
-- Per-vendor resource estimation fields and schema
-- Health check, CORS headers, and Lambda handler import
+Run a subset:
+
+```bash
+pytest tests/test_qasm_validation.py
+pytest -k "bell"
+```
+
+Run Dockerized Lambda smoke test (`/health`, `/validate`, `/analyze`):
+
+```bash
+make test
+```
 
 ---
 
 ## Deployment
 
-CI/CD is automated via GitHub Actions on push to `main`.
+GitHub Actions workflow: `.github/workflows/deploy.yml`
+
+Current deployment trigger:
+- Manual run only (`workflow_dispatch`)
+
+The workflow:
+- Builds and pushes an `linux/amd64` image to ECR.
+- Creates or updates the Lambda function as image-based runtime.
+- Applies memory/timeout config.
+- Re-attaches API Gateway invoke permission idempotently.
+
+### Operational hardening
+
+- Security headers are attached to all API responses (`CSP`, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`; `HSTS` on HTTPS).
+- Per-client rate limiting is enforced for:
+  - `POST /api/v1/qasm/validate`
+  - `POST /api/v1/qasm/analyze`
+
+Environment-tunable settings:
+
+```bash
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_WINDOW_SECONDS=60
+RATE_LIMIT_VALIDATE_REQUESTS=500
+RATE_LIMIT_ANALYZE_REQUESTS=200
+```
+
+---
+
+## Project Layout
+
+```text
+app/
+  api/v1/routes/qasm.py         # /validate, /analyze, /vendor-defaults
+  core/config.py                # pydantic settings (CORS, app name/version, debug, rate limits)
+  core/rate_limit.py            # in-memory per-client endpoint throttling
+  core/vendors.json             # vendor hardware and QEC source-of-truth
+  models/qasm.py                # request/response schemas
+  services/qasm_validator.py    # parse/validate and gate analysis
+  services/quantum_estimator.py # Azure QRE vendor estimation engine
+  main.py                       # FastAPI app wiring + CORS + /health
+handler.py                      # AWS Lambda Mangum adapter entrypoint
+tests/                          # API and service tests
+docs/adr/                       # architecture decision records
+```
+
+---
+
+## Notes
+
+- Vendor cache keys are based on `hash(vendor_config + circuit_string)`.
+- Circuit preprocessing includes unrolling, barrier removal, and gate decomposition.
+- Vendor feasibility checks run before Q# to catch above-threshold error-rate configs early.
+- Release notes are tracked in `CHANGELOG.md`; architectural decisions are tracked in `docs/adr/`.

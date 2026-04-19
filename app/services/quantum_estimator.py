@@ -18,17 +18,28 @@ Return schema (per vendor key)
 ------------------------------
     status="success"
         processor, technology, year, source, qec_scheme,
-        runtime, physical_qubits, total_logical_gates, logical_error_rate
+        runtime, runtime_seconds, physical_qubits, logical_error_rate,
+        rqops, code_distance, clock_frequency,
+        algorithmic_logical_qubits,
+        num_tstates, num_tfactories, num_tfactory_runs,
+        physical_qubits_for_algorithm, physical_qubits_for_tfactories,
+        required_logical_qubit_error_rate, required_logical_tstate_error_rate,
+        tfactory_physical_qubits, tfactory_runtime_seconds
 
     status="not_available"
         processor, technology, year, source, reason
 
-    status="above_threshold" | status="error"
+    status="above_threshold"
+        processor, technology, year, source, qec_scheme, detail,
+        failing_field, failing_value
+
+    status="error"
         processor, technology, year, source, qec_scheme, detail
 """
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -38,6 +49,7 @@ from typing import Any
 
 import pyqasm
 from qsharp.estimator import EstimatorParams
+from qsharp.estimator._estimator import EstimatorError
 from qsharp.openqasm import estimate as _qsharp_estimate
 
 _VENDORS_FILE = Path(__file__).resolve().parent.parent / "core" / "vendors.json"
@@ -63,15 +75,6 @@ class QuantumEstimator:
         "idle_error_rate",
     )
 
-    _GATE_KEYS = (
-        "tCount",
-        "rotationCount",
-        "rotationDepth",
-        "cczCount",
-        "ccixCount",
-        "measurementCount",
-    )
-
     def __init__(self, vendors_file: Path | str = _VENDORS_FILE):
         """
         Parameters
@@ -91,17 +94,98 @@ class QuantumEstimator:
         }
 
     @staticmethod
+    def _merge_override(base: dict, override: dict) -> dict:
+        """Deep-merge an override dict into a fresh copy of the vendor info."""
+        merged = copy.deepcopy(base)
+        for section in ("qubit_params", "qec_scheme"):
+            patch = override.get(section)
+            if patch:
+                merged.setdefault(section, {}).update(patch)
+        if override.get("max_code_distance") is not None:
+            merged["max_code_distance"] = override["max_code_distance"]
+        for field in ("processor", "technology", "year", "source"):
+            if override.get(field) is not None:
+                merged[field] = override[field]
+        return merged
+
+    @staticmethod
     def _cache_key(vendor_info: dict, qasm_str: str) -> str:
         payload = json.dumps(vendor_info, sort_keys=True) + qasm_str
         return hashlib.sha256(payload.encode()).hexdigest()
 
     @staticmethod
-    def _is_below_threshold(vendor_info: dict) -> bool:
+    def _failing_error_rate(vendor_info: dict) -> tuple[str, float] | None:
+        """Return the first error-rate field that is >= the QEC threshold,
+        or None if the vendor passes the pre-check.
+        """
         qp = vendor_info.get("qubit_params", {})
         threshold = vendor_info.get("qec_scheme", {}).get(
             "error_correction_threshold", 0
         )
-        return all(qp.get(k, 0) < threshold for k in QuantumEstimator._ERROR_RATE_KEYS)
+        for k in QuantumEstimator._ERROR_RATE_KEYS:
+            value = qp.get(k, 0)
+            if value >= threshold:
+                return k, value
+        return None
+
+    @staticmethod
+    def _is_below_threshold(vendor_info: dict) -> bool:
+        return QuantumEstimator._failing_error_rate(vendor_info) is None
+
+    _REQUIRED_QUBIT_FIELDS = (
+        "name",
+        "instruction_set",
+        "one_qubit_gate_time",
+        "two_qubit_gate_time",
+        "one_qubit_measurement_time",
+        "one_qubit_gate_error_rate",
+        "two_qubit_gate_error_rate",
+        "one_qubit_measurement_error_rate",
+        "t_gate_time",
+        "t_gate_error_rate",
+        "idle_error_rate",
+    )
+
+    _REQUIRED_QEC_FIELDS = (
+        "name",
+        "crossing_prefactor",
+        "error_correction_threshold",
+        "distance_coefficient_power",
+        "logical_cycle_time",
+        "physical_qubits_per_logical_qubit",
+    )
+
+    @staticmethod
+    # Guard-style early returns keep validation readable and specific.
+    # pylint: disable=too-many-return-statements
+    def _validate_vendor_spec(vendor_info: dict) -> str | None:
+        """Validate a user-provided vendor spec. Returns a human-readable
+        reason string if the spec is invalid, or None if it passes.
+        """
+        qp = vendor_info.get("qubit_params")
+        if not isinstance(qp, dict):
+            return "Missing qubit_params section."
+        for key in QuantumEstimator._REQUIRED_QUBIT_FIELDS:
+            if key not in qp:
+                return f"qubit_params is missing required field '{key}'."
+        for key in QuantumEstimator._ERROR_RATE_KEYS:
+            value = qp[key]
+            if not isinstance(value, (int, float)) or not 0 <= value <= 1:
+                return f"{key} must be a number in [0, 1] (got {value!r})."
+
+        qec = vendor_info.get("qec_scheme")
+        if not isinstance(qec, dict):
+            return "Missing qec_scheme section."
+        for key in QuantumEstimator._REQUIRED_QEC_FIELDS:
+            if key not in qec:
+                return f"qec_scheme is missing required field '{key}'."
+        threshold = qec["error_correction_threshold"]
+        if not isinstance(threshold, (int, float)) or not 0 < threshold < 1:
+            return (
+                f"qec_scheme.error_correction_threshold must be a number in (0, 1) "
+                f"(got {threshold!r})."
+            )
+        return None
 
     @staticmethod
     def _build_params(vendor_info: dict) -> EstimatorParams:
@@ -109,28 +193,9 @@ class QuantumEstimator:
         qec = vendor_info["qec_scheme"]
         params = EstimatorParams()
         params.error_budget = 0.01
-        for attr in (
-            "name",
-            "instruction_set",
-            "one_qubit_gate_time",
-            "two_qubit_gate_time",
-            "one_qubit_measurement_time",
-            "one_qubit_gate_error_rate",
-            "two_qubit_gate_error_rate",
-            "one_qubit_measurement_error_rate",
-            "t_gate_time",
-            "t_gate_error_rate",
-            "idle_error_rate",
-        ):
+        for attr in QuantumEstimator._REQUIRED_QUBIT_FIELDS:
             setattr(params.qubit_params, attr, qp[attr])
-        for attr in (
-            "name",
-            "crossing_prefactor",
-            "error_correction_threshold",
-            "distance_coefficient_power",
-            "logical_cycle_time",
-            "physical_qubits_per_logical_qubit",
-        ):
+        for attr in QuantumEstimator._REQUIRED_QEC_FIELDS:
             setattr(params.qec_scheme, attr, qec[attr])
         params.qec_scheme.max_code_distance = vendor_info.get("max_code_distance", 50)
         return params
@@ -183,56 +248,167 @@ class QuantumEstimator:
     # ------------------------------------------------------------------
 
     def _parse_raw_result(self, raw: dict) -> dict:
-        """Extract the success metrics from a raw Azure QRE result."""
-        lc = raw.get("logicalCounts", {})
+        """Extract the success metrics from a raw Azure QRE result.
+
+        Pulls every field the frontend currently renders, plus the vendor-
+        differentiating fields used by the new charts and detail popover.
+        Nanosecond durations are converted to seconds for chart axes; the
+        pre-formatted strings from `physicalCountsFormatted` are forwarded so
+        the frontend can reuse Azure's own human-readable labels.
+        """
+        pc = raw["physicalCounts"]
+        pcf = raw["physicalCountsFormatted"]
+        breakdown = pc["breakdown"]
+        lq = raw["logicalQubit"]
+        tf = raw.get("tfactory") or {}
+
         return {
-            "runtime": raw["physicalCountsFormatted"]["runtime"],
-            "physical_qubits": raw["physicalCounts"]["physicalQubits"],
-            "total_logical_gates": sum(lc.get(k, 0) for k in self._GATE_KEYS),
-            "logical_error_rate": raw["logicalQubit"]["logicalErrorRate"],
+            # --- already rendered ---
+            "runtime": pcf["runtime"],
+            "runtime_seconds": pc["runtime"] / 1e9,
+            "physical_qubits": pc["physicalQubits"],
+            "logical_error_rate": lq["logicalErrorRate"],
+            # --- throughput (new ThroughputChart) ---
+            "rqops": pc["rqops"],
+            "clock_frequency": breakdown["clockFrequency"],
+            # --- code distance (new CodeDistanceChart) ---
+            "code_distance": lq["codeDistance"],
+            # --- qubit budget split (new QubitBudgetChart) ---
+            "physical_qubits_for_algorithm": breakdown["physicalQubitsForAlgorithm"],
+            "physical_qubits_for_tfactories": breakdown["physicalQubitsForTfactories"],
+            # --- extra fields for the detail popover ---
+            "algorithmic_logical_qubits": breakdown["algorithmicLogicalQubits"],
+            "algorithmic_logical_depth": breakdown["algorithmicLogicalDepth"],
+            "logical_depth": breakdown["logicalDepth"],
+            "num_tstates": breakdown["numTstates"],
+            "num_tfactories": breakdown["numTfactories"],
+            "num_tfactory_runs": breakdown["numTfactoryRuns"],
+            "required_logical_qubit_error_rate": breakdown[
+                "requiredLogicalQubitErrorRate"
+            ],
+            "required_logical_tstate_error_rate": breakdown[
+                "requiredLogicalTstateErrorRate"
+            ],
+            "clifford_error_rate": breakdown["cliffordErrorRate"],
+            "logical_cycle_time_ns": lq["logicalCycleTime"],
+            "tfactory_physical_qubits": tf.get("physicalQubits"),
+            "tfactory_runtime_seconds": (
+                (tf["runtime"] / 1e9) if "runtime" in tf else None
+            ),
+            "tfactory_num_rounds": tf.get("numRounds"),
+            # pre-formatted strings (opaque display passthroughs)
+            "formatted": {
+                "runtime": pcf["runtime"],
+                "rqops": pcf["rqops"],
+                "physical_qubits": pcf["physicalQubits"],
+                "algorithmic_logical_qubits": pcf["algorithmicLogicalQubits"],
+                "algorithmic_logical_depth": pcf.get("algorithmicLogicalDepth"),
+                "logical_depth": pcf.get("logicalDepth"),
+                "num_tstates": pcf["numTstates"],
+                "num_tfactories": pcf["numTfactories"],
+                "num_tfactory_runs": pcf["numTfactoryRuns"],
+                "physical_qubits_for_algorithm": pcf["physicalQubitsForAlgorithm"],
+                "physical_qubits_for_tfactories": pcf["physicalQubitsForTfactories"],
+                "physical_qubits_for_tfactories_percentage": pcf[
+                    "physicalQubitsForTfactoriesPercentage"
+                ],
+                "required_logical_qubit_error_rate": pcf[
+                    "requiredLogicalQubitErrorRate"
+                ],
+                "required_logical_tstate_error_rate": pcf[
+                    "requiredLogicalTstateErrorRate"
+                ],
+                "logical_cycle_time": pcf["logicalCycleTime"],
+                "clock_frequency": pcf["clockFrequency"],
+                "logical_error_rate": pcf["logicalErrorRate"],
+                "tfactory_runtime": pcf.get("tfactoryRuntime"),
+                "tfactory_physical_qubits": pcf.get("tfactoryPhysicalQubits"),
+            },
         }
 
-    def _run_vendor_estimate(self, vendor_info: dict, qasm_str: str) -> dict:
+    # This method intentionally assembles a rich result payload from many
+    # vendor/runtime fields in one place.
+    # pylint: disable=too-many-locals
+    def _run_vendor_estimate(
+        self,
+        vendor_name: str,
+        vendor_info: dict,
+        qasm_str: str,
+        is_default: bool,
+    ) -> dict:
         """
         Execute Azure QRE for one vendor. Returns a flat result dict with a
         'status' key of 'success', 'above_threshold', or 'error'.
+
+        `is_default` indicates whether `vendor_info` is the unmodified
+        vendors.json entry — used to decide whether the precomputed
+        `_params_cache` entry can be reused.
         """
         key = self._cache_key(vendor_info, qasm_str)
         if key in self._cache:
             return self._cache[key]
 
-        qp = vendor_info["qubit_params"]
-        qec = vendor_info["qec_scheme"]
-
-        base = {
-            "processor": vendor_info["processor"],
-            "technology": vendor_info["technology"],
-            "year": vendor_info["year"],
-            "source": vendor_info["source"],
-            "qec_scheme": qec["name"],
+        # Validate user-supplied specs before touching Q#.
+        spec_error = self._validate_vendor_spec(vendor_info)
+        base_static = {
+            "processor": vendor_info.get("processor", vendor_name),
+            "technology": vendor_info.get("technology", "Unknown"),
+            "year": vendor_info.get("year"),
+            "source": vendor_info.get("source", ""),
         }
+        if spec_error is not None:
+            return {
+                **base_static,
+                "qec_scheme": vendor_info.get("qec_scheme", {}).get("name", ""),
+                "status": "error",
+                "detail": f"Invalid vendor spec: {spec_error}",
+            }
 
-        # Pre-check: all physical error rates must be below the QEC threshold
-        threshold = qec["error_correction_threshold"]
-        over = [k for k in self._ERROR_RATE_KEYS if qp[k] >= threshold]
-        if over:
+        qec = vendor_info["qec_scheme"]
+        base = {**base_static, "qec_scheme": qec["name"]}
+
+        # Pre-check: all physical error rates must be below the QEC threshold.
+        # Report the specific failing field so the user knows what to fix.
+        failing = self._failing_error_rate(vendor_info)
+        if failing is not None:
+            failing_field, failing_value = failing
+            threshold = qec["error_correction_threshold"]
             return {
                 **base,
                 "status": "above_threshold",
-                "detail": "Hardware error rates exceed the QEC threshold for this processor.",
+                "detail": (
+                    f"{failing_field} ({failing_value:.2e}) exceeds "
+                    f"{qec['name']} threshold ({threshold:.2e})"
+                ),
+                "failing_field": failing_field,
+                "failing_value": float(failing_value),
             }
 
-        params = self._params_cache.get(
-            vendor_info["processor"], self._build_params(vendor_info)
-        )
+        if is_default:
+            params = self._params_cache.get(
+                vendor_name, self._build_params(vendor_info)
+            )
+        else:
+            params = self._build_params(vendor_info)
 
         try:
             raw = _qsharp_estimate(qasm_str, params=params).data()
-        except (RuntimeError, ValueError, OSError):
+        except EstimatorError as exc:
             return {
                 **base,
                 "status": "error",
-                "detail": "Estimation failed. Check circuit validity and try again.",
+                "detail": exc.message or "Azure QRE rejected this circuit.",
+            }
+        except (RuntimeError, ValueError, OSError) as exc:
+            msg = str(exc)
+            return {
+                **base,
+                "status": "error",
+                "detail": (
+                    f"Estimation failed: {msg}"
+                    if msg
+                    else "Estimation failed. Check circuit validity and try again."
+                ),
             }
 
         result = {**base, **self._parse_raw_result(raw), "status": "success"}
@@ -243,14 +419,34 @@ class QuantumEstimator:
     # PUBLIC API
     # ------------------------------------------------------------------
 
-    def estimate(self, qasm_str: str) -> dict[str, dict]:
+    def estimate(
+        self,
+        qasm_str: str,
+        overrides: dict[str, dict] | None = None,
+        custom_vendors: dict[str, dict] | None = None,
+    ) -> dict[str, dict]:
         """
-        Run quantum resource estimation for all vendors in self.vendors.
+        Run quantum resource estimation for all vendors in self.vendors plus
+        any user-supplied custom vendors.
 
         Parameters
         ----------
         qasm_str : str
             OpenQASM 2.0 circuit string to estimate.
+        overrides : dict[str, dict] | None
+            Optional per-vendor parameter overrides. Keyed by the vendor name
+            exactly as it appears in `self.vendors`. Each value may contain
+            `qubit_params`, `qec_scheme`, and/or `max_code_distance`; only the
+            fields supplied are merged over the defaults. The base
+            vendors.json data is never mutated.
+        custom_vendors : dict[str, dict] | None
+            Optional user-supplied vendors to estimate alongside the built-in
+            ones. Each value must be a full vendor spec (same shape as
+            vendors.json entries). Names that collide with built-in vendors
+            are rejected with a ValueError so custom vendors cannot silently
+            shadow the defaults. Invalid specs are not raised here — they
+            propagate to `_run_vendor_estimate` which returns a structured
+            error result with the reason.
 
         Returns
         -------
@@ -268,9 +464,10 @@ class QuantumEstimator:
             When status == "success":
                 qec_scheme          — QEC code name
                 runtime             — human-readable runtime string
+                runtime_seconds     — float (seconds)
                 physical_qubits     — int
-                total_logical_gates — int
                 logical_error_rate  — float
+                (plus the enriched Q# fields documented in the module header)
 
             When status == "not_available":
                 reason              — explanation string
@@ -278,20 +475,41 @@ class QuantumEstimator:
             When status in ("above_threshold", "error"):
                 qec_scheme          — QEC code name
                 detail              — error description string
+                (above_threshold also carries failing_field + failing_value)
         """
-        processed = self._preprocess_cache.get(
-            qasm_str
-        ) or self._preprocess_cache.setdefault(qasm_str, self._preprocess(qasm_str))
-        active = {
-            name: info
-            for name, info in self.vendors.items()
-            if info.get("available", True)
-        }
+        if qasm_str not in self._preprocess_cache:
+            self._preprocess_cache[qasm_str] = self._preprocess(qasm_str)
+        processed = self._preprocess_cache[qasm_str]
+        overrides = overrides or {}
+        custom_vendors = custom_vendors or {}
+
+        collisions = set(custom_vendors) & set(self.vendors)
+        if collisions:
+            raise ValueError(
+                "Custom vendor names collide with built-in vendors: "
+                + ", ".join(sorted(collisions))
+            )
+
+        active: list[tuple[str, dict, bool]] = []
+        for name, info in self.vendors.items():
+            if not info.get("available", True):
+                continue
+            if name in overrides:
+                merged = self._merge_override(info, overrides[name])
+                active.append((name, merged, False))
+            else:
+                active.append((name, info, True))
+        for name, info in custom_vendors.items():
+            # Custom vendors always run the uncached params path (is_default=False)
+            # so _params_cache isn't consulted for an unknown name.
+            active.append((name, info, False))
 
         with ThreadPoolExecutor(max_workers=len(active) or 1) as pool:
             futures = {
-                name: pool.submit(self._run_vendor_estimate, info, processed)
-                for name, info in active.items()
+                name: pool.submit(
+                    self._run_vendor_estimate, name, info, processed, is_default
+                )
+                for name, info, is_default in active
             }
 
         # Resolve in original vendor order, not completion order

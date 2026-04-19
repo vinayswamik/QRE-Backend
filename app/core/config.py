@@ -21,6 +21,11 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
+    CORS_ORIGIN_REGEX: str = r"^https://([a-z0-9-]+\.)?qre\.pages\.dev$"
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
+    RATE_LIMIT_VALIDATE_REQUESTS: int = 500
+    RATE_LIMIT_ANALYZE_REQUESTS: int = 200
 
 
 settings = Settings()

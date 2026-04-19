@@ -7,6 +7,7 @@ Covers:
   3. Semantic errors (undeclared registers, type mismatches)
   4. Edge cases (empty body, missing field, whitespace-only code)
 """
+# pylint: disable=duplicate-code
 
 from fastapi.testclient import TestClient
 
@@ -212,3 +213,72 @@ class TestRequestValidation:
         """Code strings longer than 100,000 chars should be rejected."""
         resp = client.post(ENDPOINT, json={"code": "x" * 100_001})
         assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Rich error diagnostics — line / column / snippet / hint
+# ---------------------------------------------------------------------------
+
+
+OUT_OF_RANGE_QUBIT = """\
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+h q[5];
+"""
+
+MISSING_SEMICOLON = """\
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2]
+h q[0];
+"""
+
+UNDECLARED_GATE = """\
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+foo q[0];
+"""
+
+
+class TestRichErrorDiagnostics:
+    """Failed validation should return structured line/snippet/hint fields."""
+
+    def test_semantic_error_has_line_and_snippet(self):
+        """Out-of-range qubit index should surface the offending line."""
+        resp = post_validate(OUT_OF_RANGE_QUBIT)
+        data = resp.json()
+        assert data["valid"] is False
+        assert data["line"] == 4
+        assert data["snippet"] == "h q[5];"
+        assert data["hint"]
+        assert "5" in data["message"] and "2" in data["message"]
+
+    def test_syntax_error_has_line_from_antlr_token(self):
+        """Missing semicolon should still produce a line number via the ANTLR token."""
+        resp = post_validate(MISSING_SEMICOLON)
+        data = resp.json()
+        assert data["valid"] is False
+        assert data["line"] is not None
+        assert data["snippet"] is not None
+        assert data["hint"] is not None
+        assert data["error_type"]
+
+    def test_garbage_input_has_location(self):
+        """Garbage input should produce a non-empty message and hint, not a dangling colon."""
+        resp = post_validate(INVALID_SYNTAX)
+        data = resp.json()
+        assert data["valid"] is False
+        assert data["message"]
+        assert not data["message"].endswith(":")
+        assert data["hint"] is not None
+
+    def test_undeclared_gate_names_the_gate(self):
+        """An unsupported gate should name the gate and give line info."""
+        resp = post_validate(UNDECLARED_GATE)
+        data = resp.json()
+        assert data["valid"] is False
+        assert "foo" in data["message"]
+        assert data["line"] == 4
+        assert data["snippet"] == "foo q[0];"

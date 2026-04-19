@@ -106,5 +106,5 @@ jobs:
             --statement-id api-gateway-invoke \
             --action lambda:InvokeFunction \
             --principal apigateway.amazonaws.com \
-            --source-arn "arn:aws:execute-api:$AWS_REGION:$AWS_ACCOUNT_ID:2gs291cjg2/*" \
+            --source-arn "arn:aws:execute-api:$AWS_REGION:$AWS_ACCOUNT_ID:${{ secrets.API_GATEWAY_ID }}/*" \
           2>/dev/null || echo "Permission already exists — skipping"

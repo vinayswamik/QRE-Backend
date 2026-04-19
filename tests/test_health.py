@@ -10,6 +10,7 @@ Tests for app-level concerns:
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
+from app.core.rate_limit import reset_rate_limiter
 from app.main import app
 from handler import lambda_handler
 
@@ -187,3 +188,57 @@ class TestMethodEnforcement:
         """POST on the GET-only health endpoint should return 405."""
         resp = client.post("/health")
         assert resp.status_code == 405
+
+
+# ---------------------------------------------------------------------------
+# 7. Security headers
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityHeaders:
+    """Verify baseline security headers are attached to responses."""
+
+    def test_health_includes_security_headers(self):
+        """GET /health should include hardening headers."""
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        assert resp.headers.get("x-content-type-options") == "nosniff"
+        assert resp.headers.get("x-frame-options") == "DENY"
+        assert resp.headers.get("referrer-policy") == "no-referrer"
+        assert (
+            resp.headers.get("permissions-policy")
+            == "geolocation=(), microphone=(), camera=()"
+        )
+        assert resp.headers.get("content-security-policy") is not None
+
+
+# ---------------------------------------------------------------------------
+# 8. Rate limiting
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimiting:
+    """Verify per-endpoint request throttling."""
+
+    def test_validate_endpoint_rate_limits(self, monkeypatch):
+        """Validate should return 429 after per-window request limit is exceeded."""
+        reset_rate_limiter()
+        monkeypatch.setattr(settings, "RATE_LIMIT_ENABLED", True)
+        monkeypatch.setattr(settings, "RATE_LIMIT_WINDOW_SECONDS", 60)
+        monkeypatch.setattr(settings, "RATE_LIMIT_VALIDATE_REQUESTS", 2)
+
+        payload = {
+            "code": (
+                'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\ncreg c[1];\n'
+                "h q[0];\nmeasure q -> c;"
+            )
+        }
+
+        first = client.post("/api/v1/qasm/validate", json=payload)
+        second = client.post("/api/v1/qasm/validate", json=payload)
+        third = client.post("/api/v1/qasm/validate", json=payload)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert third.status_code == 429
+        assert third.headers.get("retry-after") is not None

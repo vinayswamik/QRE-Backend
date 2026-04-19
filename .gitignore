@@ -14,16 +14,14 @@ __pycache__/
 qre-env/
 *.egg-info/
 .pytest_cache/
-old_backend/
 
 # Tool caches
 .mypy_cache/
 .ruff_cache/
 
-# Claude Code (local settings contain personal file paths)
+# Claude Code
 .claude/
-
-GNUmakefile
+CLAUDE.md
 
 # OS
 .DS_Store
