@@ -117,13 +117,13 @@ jobs:
               --function-name $FUNCTION_NAME \
               --auth-type NONE \
               --invoke-mode RESPONSE_STREAM \
-              --cors '{"AllowOrigins":["https://qre.pages.dev","http://localhost:5173"],"AllowMethods":["POST","GET","OPTIONS"],"AllowHeaders":["Content-Type","Accept"]}'
+              --cors '{"AllowOrigins":["https://qre.pages.dev","http://localhost:5173"],"AllowMethods":["POST","GET"],"AllowHeaders":["Content-Type","Accept"]}'
           else
             aws lambda create-function-url-config \
               --function-name $FUNCTION_NAME \
               --auth-type NONE \
               --invoke-mode RESPONSE_STREAM \
-              --cors '{"AllowOrigins":["https://qre.pages.dev","http://localhost:5173"],"AllowMethods":["POST","GET","OPTIONS"],"AllowHeaders":["Content-Type","Accept"]}'
+              --cors '{"AllowOrigins":["https://qre.pages.dev","http://localhost:5173"],"AllowMethods":["POST","GET"],"AllowHeaders":["Content-Type","Accept"]}'
             aws lambda add-permission \
               --function-name $FUNCTION_NAME \
               --statement-id function-url-invoke \
