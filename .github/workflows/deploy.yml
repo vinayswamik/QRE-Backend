@@ -101,38 +101,6 @@ jobs:
             aws lambda wait function-updated --function-name $FUNCTION_NAME
           fi
 
-      # Lambda response streaming is required for the /analyze/stream SSE
-      # endpoint to actually deliver events in real time. API Gateway HTTP API
-      # does NOT support Lambda response streaming; a Function URL with
-      # InvokeMode=RESPONSE_STREAM does. We add/update one so the frontend can
-      # hit it directly for SSE while keeping API Gateway for /validate and
-      # /analyze. Mangum does not stream, so the /analyze/stream route needs
-      # Lambda Web Adapter or a streaming handler to actually chunk over the
-      # Function URL — tracked as a follow-up; this step only configures the
-      # URL so the infrastructure is ready when that lands.
-      - name: Ensure streaming Function URL exists
-        run: |
-          if aws lambda get-function-url-config --function-name $FUNCTION_NAME >/dev/null 2>&1; then
-            aws lambda update-function-url-config \
-              --function-name $FUNCTION_NAME \
-              --auth-type NONE \
-              --invoke-mode RESPONSE_STREAM \
-              --cors '{"AllowOrigins":["https://qre.pages.dev","http://localhost:5173"],"AllowMethods":["POST","GET"],"AllowHeaders":["Content-Type","Accept"]}'
-          else
-            aws lambda create-function-url-config \
-              --function-name $FUNCTION_NAME \
-              --auth-type NONE \
-              --invoke-mode RESPONSE_STREAM \
-              --cors '{"AllowOrigins":["https://qre.pages.dev","http://localhost:5173"],"AllowMethods":["POST","GET"],"AllowHeaders":["Content-Type","Accept"]}'
-            aws lambda add-permission \
-              --function-name $FUNCTION_NAME \
-              --statement-id function-url-invoke \
-              --action lambda:InvokeFunctionUrl \
-              --principal '*' \
-              --function-url-auth-type NONE \
-              2>/dev/null || true
-          fi
-
       - name: Re-attach API Gateway permission (first deploy only)
         env:
           IMAGE_URI: ${{ steps.build.outputs.image_uri }}
