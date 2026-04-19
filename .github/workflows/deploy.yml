@@ -59,6 +59,12 @@ jobs:
             --function-name $FUNCTION_NAME \
             --query PackageType --output text 2>/dev/null || echo "NOT_FOUND")
 
+          # Default AWS accounts cap Lambda memory at 3008 MB. Raising to 10240
+          # requires a service quota increase request (Service Quotas →
+          # "Concurrent executions" / "Memory allocation"). Bump this value
+          # once the quota is lifted.
+          MEMORY_SIZE=3008
+
           if [ "$PACKAGE_TYPE" = "Zip" ]; then
             echo "Zip-based Lambda detected — deleting and recreating as Image..."
             aws lambda delete-function --function-name $FUNCTION_NAME
@@ -67,7 +73,7 @@ jobs:
               --package-type Image \
               --code ImageUri="$IMAGE_URI" \
               --role $LAMBDA_ROLE \
-              --memory-size 10240 \
+              --memory-size $MEMORY_SIZE \
               --timeout 900
             aws lambda wait function-active --function-name $FUNCTION_NAME
 
@@ -78,7 +84,7 @@ jobs:
               --package-type Image \
               --code ImageUri="$IMAGE_URI" \
               --role $LAMBDA_ROLE \
-              --memory-size 10240 \
+              --memory-size $MEMORY_SIZE \
               --timeout 900
             aws lambda wait function-active --function-name $FUNCTION_NAME
 
@@ -90,7 +96,7 @@ jobs:
             aws lambda wait function-updated --function-name $FUNCTION_NAME
             aws lambda update-function-configuration \
               --function-name $FUNCTION_NAME \
-              --memory-size 10240 \
+              --memory-size $MEMORY_SIZE \
               --timeout 900
             aws lambda wait function-updated --function-name $FUNCTION_NAME
           fi
