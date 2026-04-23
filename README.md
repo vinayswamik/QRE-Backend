@@ -1,5 +1,7 @@
 # QRE Backend
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 QRE Backend is a FastAPI service for validating and analyzing OpenQASM 2.0/3.0 circuits.
 It combines `pyqasm` parsing with Azure Quantum Resource Estimator (Q#) to return
 fault-tolerant physical resource estimates across multiple real hardware vendors.
@@ -382,3 +384,9 @@ docs/adr/                       # architecture decision records
 - Circuit preprocessing includes unrolling, barrier removal, and gate decomposition.
 - Vendor feasibility checks run before Q# to catch above-threshold error-rate configs early.
 - Release notes are tracked in `CHANGELOG.md`; architectural decisions are tracked in `docs/adr/`.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
