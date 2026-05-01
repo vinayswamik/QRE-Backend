@@ -11,6 +11,7 @@ Covers:
 # pylint: disable=duplicate-code
 
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 
 from app.core.config import settings
 from app.main import app
@@ -218,6 +219,22 @@ class TestRequestValidation:
         detail = resp.json()["detail"]
         assert detail["error"] == "qasm_payload_too_large"
         assert detail["limits"]["max_qasm_bytes"] == settings.MAX_QASM_BYTES
+
+    def test_unexpected_validator_error_returns_structured_400(
+        self, monkeypatch: MonkeyPatch
+    ):
+        """Unexpected backend exceptions should produce a client-readable 400."""
+
+        def _boom(_: str):
+            raise RuntimeError("simulated parser crash")
+
+        monkeypatch.setattr("app.api.v1.routes.qasm.validate_qasm", _boom)
+        resp = post_validate(VALID_BELL_STATE)
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail["error"] == "qasm_processing_error"
+        assert detail["stage"] == "validation"
+        assert "simulated parser crash" in detail["message"]
 
 
 # ---------------------------------------------------------------------------

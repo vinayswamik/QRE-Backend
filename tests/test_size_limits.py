@@ -45,7 +45,7 @@ class TestLimitsEndpoint:
 
 class TestQubitCap:
     def test_validate_rejects_oversized_qubits_with_413(self, monkeypatch: MonkeyPatch):
-        # Shrink the cap for the test so we don't have to build a 200-qubit
+        # Shrink the cap for the test so we don't have to build a 300-qubit
         # circuit just to trip it. Restored after the test.
         monkeypatch.setattr(settings, "MAX_QUBITS", 5)
         code = _large_qubit_circuit(10)

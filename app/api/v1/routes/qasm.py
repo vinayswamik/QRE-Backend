@@ -1,6 +1,7 @@
 """QASM validation and analysis route handlers."""
 
 import json
+import logging
 from typing import Iterator
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -28,6 +29,7 @@ from app.services.qasm_validator import (
 from app.services.quantum_estimator import QuantumEstimator
 
 router = APIRouter(prefix="/qasm", tags=["qasm"])
+logger = logging.getLogger(__name__)
 
 _estimator_for_defaults = QuantumEstimator()
 _stream_estimator = QuantumEstimator()
@@ -36,6 +38,24 @@ _stream_estimator = QuantumEstimator()
 def _too_large(exc: CircuitTooLargeError) -> HTTPException:
     """Map a CircuitTooLargeError to a 413 HTTPException with structured detail."""
     return HTTPException(status_code=413, detail=exc.detail)
+
+
+def _unexpected_processing_error(stage: str, exc: Exception) -> HTTPException:
+    """Return a structured 400 for unexpected parse/analysis failures."""
+    message = str(exc).strip()
+    detail_message = (
+        f"{stage.capitalize()} failed: {message}"
+        if message
+        else f"{stage.capitalize()} failed due to an internal parsing error."
+    )
+    return HTTPException(
+        status_code=400,
+        detail={
+            "error": "qasm_processing_error",
+            "stage": stage,
+            "message": detail_message,
+        },
+    )
 
 
 @router.post(
@@ -50,6 +70,10 @@ def validate(payload: QasmValidateRequest):
         return validate_qasm(payload.code)
     except CircuitTooLargeError as exc:
         raise _too_large(exc) from exc
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # noqa: BLE001 — return a parse-level 400 instead of a generic 500.
+        logger.exception("Unexpected /qasm/validate failure")
+        raise _unexpected_processing_error("validation", exc) from exc
 
 
 @router.post(
@@ -87,6 +111,10 @@ def analyze(payload: QasmAnalyzeRequest):
     except ValueError as exc:
         # Raised when custom vendor names collide with built-in vendors.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # noqa: BLE001 — return a structured 400 for unexpected parse/estimate errors.
+        logger.exception("Unexpected /qasm/analyze failure")
+        raise _unexpected_processing_error("analysis", exc) from exc
 
 
 def _sse_event(event: str, data: dict) -> str:

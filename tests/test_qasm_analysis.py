@@ -27,6 +27,7 @@ Test categories:
 
 import pytest
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 
 from app.core.config import settings
 from app.main import app
@@ -682,6 +683,22 @@ class TestAnalyzeRequestValidation:
         detail = resp.json()["detail"]
         assert detail["error"] == "qasm_payload_too_large"
         assert detail["limits"]["max_qasm_bytes"] == settings.MAX_QASM_BYTES
+
+    def test_unexpected_analyzer_error_returns_structured_400(
+        self, monkeypatch: MonkeyPatch
+    ):
+        """Unexpected backend exceptions should return a detailed 400 response."""
+
+        def _boom(_: str, vendor_overrides=None, custom_vendors=None):
+            raise RuntimeError("simulated estimator crash")
+
+        monkeypatch.setattr("app.api.v1.routes.qasm.analyze_qasm", _boom)
+        resp = post_analyze(CIRCUITS[0][1])
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail["error"] == "qasm_processing_error"
+        assert detail["stage"] == "analysis"
+        assert "simulated estimator crash" in detail["message"]
 
 
 # ---------------------------------------------------------------------------
