@@ -281,6 +281,9 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "circuit_depth",
     "gate_breakdown",
     "vendors",
+    "successful_vendor_count",
+    "failed_vendor_count",
+    "estimate_failure_banner",
 }
 GATE_CATEGORIES = {"1Q", "2Q", "Toffoli"}
 
@@ -699,6 +702,42 @@ class TestAnalyzeRequestValidation:
         assert detail["error"] == "qasm_processing_error"
         assert detail["stage"] == "analysis"
         assert "simulated estimator crash" in detail["message"]
+
+
+# --- OpenQASM 3 + qelib1: parses in pyqasm but Q# lowering fails all vendors ---
+OQ3_QELIB_LOWER_FAIL = """OPENQASM 3.0;
+include "qelib1.inc";
+qreg q[2];
+creg c[2];
+h q[0];
+cx q[0],q[1];
+measure q -> c;
+"""
+
+
+class TestEstimateFailureBanner:
+    """Rollup fields so clients can show an error instead of empty vendor charts."""
+
+    def test_banner_when_all_vendors_fail_lowering(self):
+        data = post_analyze(OQ3_QELIB_LOWER_FAIL).json()
+        assert data["successful_vendor_count"] == 0
+        assert data["failed_vendor_count"] == len(data["vendors"])
+        assert data["estimate_failure_banner"]
+        assert (
+            "qelib1" in data["estimate_failure_banner"].lower()
+            or "openqasm" in data["estimate_failure_banner"].lower()
+        )
+
+    def test_banner_null_when_estimates_succeed(self):
+        data = post_analyze(CIRCUITS[0][1]).json()
+        assert data["successful_vendor_count"] > 0
+        assert data["estimate_failure_banner"] is None
+
+    def test_counts_align_with_vendor_status_field(self):
+        data = post_analyze(CIRCUITS[0][1]).json()
+        ok = sum(1 for v in data["vendors"].values() if v["status"] == "success")
+        assert ok == data["successful_vendor_count"]
+        assert ok + data["failed_vendor_count"] == len(data["vendors"])
 
 
 # ---------------------------------------------------------------------------

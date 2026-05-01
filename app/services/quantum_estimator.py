@@ -48,6 +48,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import pyqasm
+
+from app.services.estimate_rollup import rollup_analyze_vendor_results
 from qsharp.estimator import EstimatorParams
 from qsharp.estimator._estimator import EstimatorError
 from qsharp.openqasm import QasmError, estimate as _qsharp_estimate
@@ -600,7 +602,11 @@ class QuantumEstimator:
             for name, _, _ in active
             if name in vendor_results
         }
-        yield {"type": "complete", "vendors": ordered}
+        yield {
+            "type": "complete",
+            "vendors": ordered,
+            **rollup_analyze_vendor_results(ordered),
+        }
 
     def pause_vendor(self, *names: str) -> None:
         """

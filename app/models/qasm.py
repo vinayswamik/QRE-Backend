@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.config import settings
 
@@ -206,3 +206,45 @@ class QasmAnalyzeResponse(BaseModel):
     circuit_depth: int
     gate_breakdown: list[GateCategoryBreakdown]
     vendors: dict[str, VendorEstimateResult]
+    successful_vendor_count: int = Field(
+        ...,
+        ge=0,
+        description="Vendors that returned status success (resource charts have data).",
+    )
+    failed_vendor_count: int = Field(
+        ...,
+        ge=0,
+        description="Vendors that did not succeed (includes not_available / above_threshold / error).",
+    )
+    estimate_failure_banner: str | None = Field(
+        default=None,
+        description=(
+            "Present when zero vendors succeeded. Clients should surface this prominently "
+            "instead of rendering empty vendor resource charts."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _vendor_counts_consistent(self) -> "QasmAnalyzeResponse":
+        expected = len(self.vendors)
+        got = self.successful_vendor_count + self.failed_vendor_count
+        if got != expected:
+            raise ValueError(
+                f"successful_vendor_count + failed_vendor_count ({got}) must equal "
+                f"len(vendors) ({expected})"
+            )
+        if expected == 0:
+            if self.estimate_failure_banner is not None:
+                raise ValueError("estimate_failure_banner must be None when vendors is empty")
+            return self
+        if self.successful_vendor_count > 0 and self.estimate_failure_banner is not None:
+            raise ValueError("estimate_failure_banner must be None when any vendor succeeded")
+        if self.successful_vendor_count == 0:
+            if self.estimate_failure_banner is None or not str(
+                self.estimate_failure_banner
+            ).strip():
+                raise ValueError(
+                    "estimate_failure_banner required when no vendor succeeded "
+                    "and vendors is non-empty"
+                )
+        return self

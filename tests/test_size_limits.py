@@ -9,6 +9,8 @@ Covers:
 
 # pylint: disable=duplicate-code,missing-class-docstring,missing-function-docstring
 
+import json
+
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
@@ -127,6 +129,30 @@ class TestStreamingEndpoint:
         assert "event: circuit_metadata" in body
         assert "event: vendor_result" in body
         assert "event: complete" in body
+
+    def test_stream_complete_includes_estimate_rollup(self):
+        code = '''OPENQASM 3.0;
+include "qelib1.inc";
+qreg q[2]; creg c[2]; h q[0]; cx q[0],q[1]; measure q -> c;
+'''
+        with client.stream(
+            "POST", "/api/v1/qasm/analyze/stream", json={"code": code}
+        ) as resp:
+            assert resp.status_code == 200
+            body = "".join(resp.iter_text())
+        payload = None
+        for frame in body.split("\n\n"):
+            if frame.startswith("event: complete"):
+                line = next(
+                    (ln for ln in frame.split("\n") if ln.startswith("data: ")), None
+                )
+                assert line is not None
+                payload = json.loads(line.removeprefix("data: "))
+                break
+        assert payload is not None
+        assert payload["successful_vendor_count"] == 0
+        assert payload["failed_vendor_count"] == len(payload["vendors"])
+        assert payload["estimate_failure_banner"]
 
     def test_stream_oversized_yields_error_event(self, monkeypatch: MonkeyPatch):
         monkeypatch.setattr(settings, "MAX_QUBITS", 1)

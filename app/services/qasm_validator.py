@@ -21,6 +21,7 @@ from app.models.qasm import (
     VendorEstimateResult,
 )
 from app.services.circuit_metrics import check_size_limits, parse_circuit_metrics
+from app.services.estimate_rollup import rollup_analyze_vendor_results
 from app.services.quantum_estimator import QuantumEstimator
 
 _estimator = QuantumEstimator()
@@ -227,6 +228,7 @@ def analyze_qasm(
         overrides=vendor_overrides,
         custom_vendors=custom_vendors,
     )
+    rollup = rollup_analyze_vendor_results(raw_results)
     vendors = {name: VendorEstimateResult(**data) for name, data in raw_results.items()}
 
     return QasmAnalyzeResponse(
@@ -235,4 +237,5 @@ def analyze_qasm(
         circuit_depth=circuit_depth,
         gate_breakdown=gate_breakdown,
         vendors=vendors,
+        **rollup,
     )
