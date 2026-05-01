@@ -7,10 +7,12 @@ Covers:
   3. Semantic errors (undeclared registers, type mismatches)
   4. Edge cases (empty body, missing field, whitespace-only code)
 """
+
 # pylint: disable=duplicate-code
 
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from app.main import app
 
 client = TestClient(app)
@@ -209,12 +211,13 @@ class TestRequestValidation:
         # Pydantic coerces int to str or rejects — either way shape is valid
         assert resp.status_code in (200, 422)
 
-    def test_code_exceeding_max_length_returns_422(self):
-        """Code strings longer than MAX_QASM_BYTES should be rejected by Pydantic."""
-        from app.core.config import settings
-
+    def test_code_exceeding_max_length_returns_413(self):
+        """Oversized QASM text should yield 413 with an explicit caps message."""
         resp = client.post(ENDPOINT, json={"code": "x" * (settings.MAX_QASM_BYTES + 1)})
-        assert resp.status_code == 422
+        assert resp.status_code == 413
+        detail = resp.json()["detail"]
+        assert detail["error"] == "qasm_payload_too_large"
+        assert detail["limits"]["max_qasm_bytes"] == settings.MAX_QASM_BYTES
 
 
 # ---------------------------------------------------------------------------

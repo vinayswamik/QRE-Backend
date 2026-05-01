@@ -14,7 +14,7 @@ import pyqasm
 from openqasm3.ast import QuantumGate, QuantumPhase
 from pyqasm.exceptions import ValidationError
 
-from app.core.config import settings
+from app.core.config import input_limits, settings
 
 
 class CircuitTooLargeError(Exception):
@@ -80,39 +80,53 @@ def check_size_limits(qubits: int, gate_count: int, depth: int) -> None:
     code changes. The error carries the failing metric + the configured cap
     so the frontend can render a precise message.
     """
+    limits = input_limits()
+    limit_note = (
+        'Use GET /api/v1/qasm/limits (or the same names in JSON field "limits") '
+        "for all supported ceilings."
+    )
     if qubits > settings.MAX_QUBITS:
         raise CircuitTooLargeError(
             {
+                "error": "circuit_too_large",
                 "message": (
-                    f"Circuit has {qubits} qubits, exceeds limit of "
-                    f"{settings.MAX_QUBITS}."
+                    f"This input is too large: the circuit declares {qubits} qubits, "
+                    f"but this backend supports up to {settings.MAX_QUBITS}. "
+                    f"{limit_note}"
                 ),
                 "field": "qubits",
                 "value": qubits,
                 "limit": settings.MAX_QUBITS,
+                "limits": limits,
             }
         )
     if gate_count > settings.MAX_GATE_COUNT:
         raise CircuitTooLargeError(
             {
+                "error": "circuit_too_large",
                 "message": (
-                    f"Circuit has {gate_count} gates, exceeds limit of "
-                    f"{settings.MAX_GATE_COUNT}."
+                    f"This input is too large: parsed gate count is {gate_count:,}, "
+                    f"but this backend supports up to {settings.MAX_GATE_COUNT:,}. "
+                    f"{limit_note}"
                 ),
                 "field": "gate_count",
                 "value": gate_count,
                 "limit": settings.MAX_GATE_COUNT,
+                "limits": limits,
             }
         )
     if depth > settings.MAX_CIRCUIT_DEPTH:
         raise CircuitTooLargeError(
             {
+                "error": "circuit_too_large",
                 "message": (
-                    f"Circuit depth {depth} exceeds limit of "
-                    f"{settings.MAX_CIRCUIT_DEPTH}."
+                    f"This input is too large: circuit depth is {depth:,}, "
+                    f"but this backend supports depth up to {settings.MAX_CIRCUIT_DEPTH:,}. "
+                    f"{limit_note}"
                 ),
                 "field": "depth",
                 "value": depth,
                 "limit": settings.MAX_CIRCUIT_DEPTH,
+                "limits": limits,
             }
         )

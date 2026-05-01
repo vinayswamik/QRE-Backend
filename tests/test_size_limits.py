@@ -4,12 +4,13 @@ Tests for input size enforcement.
 Covers:
   1. GET /qasm/limits returns the configured caps.
   2. Structural caps (qubits, gate count, depth) return 413 with detail.
-  3. Pydantic byte-length cap still returns 422 at the max_length boundary.
+  3. QASM byte-length over max returns 413 with explicit limits payload.
 """
-# pylint: disable=duplicate-code
 
-import pytest
+# pylint: disable=duplicate-code,missing-class-docstring,missing-function-docstring
+
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 
 from app.core.config import settings
 from app.main import app
@@ -28,12 +29,7 @@ def _large_qubit_circuit(n: int) -> str:
     enough gates to trip the gate cap.
     """
     body = "\n".join(f"h q[{i}];" for i in range(n))
-    return (
-        "OPENQASM 2.0;\n"
-        'include "qelib1.inc";\n'
-        f"qreg q[{n}];\n"
-        f"{body}\n"
-    )
+    return f'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[{n}];\n{body}\n'
 
 
 class TestLimitsEndpoint:
@@ -48,7 +44,7 @@ class TestLimitsEndpoint:
 
 
 class TestQubitCap:
-    def test_validate_rejects_oversized_qubits_with_413(self, monkeypatch):
+    def test_validate_rejects_oversized_qubits_with_413(self, monkeypatch: MonkeyPatch):
         # Shrink the cap for the test so we don't have to build a 200-qubit
         # circuit just to trip it. Restored after the test.
         monkeypatch.setattr(settings, "MAX_QUBITS", 5)
@@ -56,11 +52,13 @@ class TestQubitCap:
         resp = client.post(VALIDATE, json={"code": code})
         assert resp.status_code == 413
         detail = resp.json()["detail"]
+        assert detail["error"] == "circuit_too_large"
         assert detail["field"] == "qubits"
         assert detail["value"] == 10
         assert detail["limit"] == 5
+        assert detail["limits"]["max_qubits"] == 5
 
-    def test_analyze_rejects_oversized_qubits_with_413(self, monkeypatch):
+    def test_analyze_rejects_oversized_qubits_with_413(self, monkeypatch: MonkeyPatch):
         monkeypatch.setattr(settings, "MAX_QUBITS", 5)
         code = _large_qubit_circuit(10)
         resp = client.post(ANALYZE, json={"code": code})
@@ -70,7 +68,7 @@ class TestQubitCap:
 
 
 class TestGateCap:
-    def test_rejects_oversized_gate_count(self, monkeypatch):
+    def test_rejects_oversized_gate_count(self, monkeypatch: MonkeyPatch):
         monkeypatch.setattr(settings, "MAX_GATE_COUNT", 3)
         code = (
             "OPENQASM 2.0;\n"
@@ -81,6 +79,7 @@ class TestGateCap:
         resp = client.post(VALIDATE, json={"code": code})
         assert resp.status_code == 413
         detail = resp.json()["detail"]
+        assert detail["error"] == "circuit_too_large"
         assert detail["field"] == "gate_count"
         assert detail["limit"] == 3
 
@@ -91,14 +90,19 @@ class TestByteLengthCap:
         QASM itself is garbage, we only need Pydantic to accept)."""
         code = "x" * settings.MAX_QASM_BYTES
         resp = client.post(VALIDATE, json={"code": code})
-        # Anything below the Pydantic ceiling should make it past the 422
-        # layer; the response may be 200 (with valid=False) or 413.
+        # Anything below the Pydantic ceiling should make it past request
+        # validation; the response may be 200 (with valid=False) or 413.
         assert resp.status_code != 422
 
-    def test_over_boundary_rejected_by_pydantic(self):
+    def test_over_boundary_returns_413_with_limits(self):
         code = "x" * (settings.MAX_QASM_BYTES + 1)
         resp = client.post(VALIDATE, json={"code": code})
-        assert resp.status_code == 422
+        assert resp.status_code == 413
+        detail = resp.json()["detail"]
+        assert detail["error"] == "qasm_payload_too_large"
+        assert detail["field"] == "qasm_byte_length"
+        assert detail["limit"] == settings.MAX_QASM_BYTES
+        assert detail["limits"]["max_qasm_bytes"] == settings.MAX_QASM_BYTES
 
 
 class TestStreamingEndpoint:
@@ -124,7 +128,7 @@ class TestStreamingEndpoint:
         assert "event: vendor_result" in body
         assert "event: complete" in body
 
-    def test_stream_oversized_yields_error_event(self, monkeypatch):
+    def test_stream_oversized_yields_error_event(self, monkeypatch: MonkeyPatch):
         monkeypatch.setattr(settings, "MAX_QUBITS", 1)
         code = _large_qubit_circuit(3)
         with client.stream(
@@ -133,4 +137,14 @@ class TestStreamingEndpoint:
             assert resp.status_code == 200
             body = "".join(resp.iter_text())
         assert "event: error" in body
-        assert "\"status\": 413" in body
+        assert '"status": 413' in body
+        assert "circuit_too_large" in body
+        assert "max_qubits" in body
+
+    def test_stream_code_over_byte_cap_returns_http_413(self):
+        """Oversized body.code never opens SSE — global validation runs first."""
+        code = "x" * (settings.MAX_QASM_BYTES + 1)
+        resp = client.post("/api/v1/qasm/analyze/stream", json={"code": code})
+        assert resp.status_code == 413
+        detail = resp.json()["detail"]
+        assert detail["error"] == "qasm_payload_too_large"

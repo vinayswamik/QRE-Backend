@@ -563,7 +563,7 @@ class QuantumEstimator:
         total = len(active)
         yield {"type": "stage", "stage": "estimating", "total_vendors": total}
 
-        results: dict[str, dict] = {}
+        vendor_results: dict[str, dict] = {}
         with ThreadPoolExecutor(max_workers=total or 1) as pool:
             future_to_name = {
                 pool.submit(
@@ -575,7 +575,7 @@ class QuantumEstimator:
             for fut in as_completed(future_to_name):
                 name = future_to_name[fut]
                 result = fut.result()
-                results[name] = result
+                vendor_results[name] = result
                 completed += 1
                 yield {
                     "type": "vendor_result",
@@ -587,7 +587,11 @@ class QuantumEstimator:
 
         # Preserve the original vendor ordering on the final payload so the
         # frontend can render a stable list regardless of completion order.
-        ordered = {name: results[name] for name, _, _ in active if name in results}
+        ordered = {
+            name: vendor_results[name]
+            for name, _, _ in active
+            if name in vendor_results
+        }
         yield {"type": "complete", "vendors": ordered}
 
     def pause_vendor(self, *names: str) -> None:
@@ -635,5 +639,5 @@ if __name__ == "__main__":
 
     qasm_input = Path(sys.argv[1]).read_text(encoding="utf-8")
     estimator = QuantumEstimator()
-    results = estimator.estimate(qasm_input)
-    pprint.pprint(results, sort_dicts=False)
+    cli_results = estimator.estimate(qasm_input)
+    pprint.pprint(cli_results, sort_dicts=False)

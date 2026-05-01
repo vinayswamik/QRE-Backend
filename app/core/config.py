@@ -38,3 +38,14 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def input_limits() -> dict[str, int]:
+    """Snapshot of enforced input caps (GET /limits and error payloads)."""
+
+    return {
+        "max_qasm_bytes": settings.MAX_QASM_BYTES,
+        "max_qubits": settings.MAX_QUBITS,
+        "max_gate_count": settings.MAX_GATE_COUNT,
+        "max_circuit_depth": settings.MAX_CIRCUIT_DEPTH,
+    }

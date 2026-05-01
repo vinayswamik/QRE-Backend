@@ -23,7 +23,9 @@ class InMemoryRateLimiter:
         while bucket and bucket[0] <= cutoff:
             bucket.popleft()
 
-    def allow(self, key: str, max_requests: int, window_seconds: int) -> tuple[bool, int]:
+    def allow(
+        self, key: str, max_requests: int, window_seconds: int
+    ) -> tuple[bool, int]:
         """Return whether request is allowed and retry-after seconds if blocked."""
         now = time()
         with self._lock:

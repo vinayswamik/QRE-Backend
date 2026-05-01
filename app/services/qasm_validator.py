@@ -152,7 +152,7 @@ def _build_gate_breakdown(
     )
 
 
-def validate_qasm(code: str) -> QasmValidateResponse:
+def validate_qasm(code: str) -> QasmValidateResponse:  # pylint: disable=too-many-locals
     """Parse and semantically validate an OpenQASM program.
 
     On successful parse also enforces structural limits (qubits, gate count,

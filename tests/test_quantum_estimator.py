@@ -9,6 +9,7 @@ Tests the estimator class directly (not via the HTTP endpoint):
   5. Caching behaviour
   6. Threshold detection
 """
+
 # pylint: disable=missing-function-docstring
 
 import json

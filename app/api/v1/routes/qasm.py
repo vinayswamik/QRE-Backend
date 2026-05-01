@@ -6,7 +6,7 @@ from typing import Iterator
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.core.config import settings
+from app.core.config import input_limits
 from app.core.rate_limit import (
     enforce_analyze_rate_limit,
     enforce_validate_rate_limit,
@@ -114,10 +114,9 @@ def _stream_analysis(payload: QasmAnalyzeRequest) -> Iterator[str]:
     except CircuitTooLargeError as exc:
         yield _sse_event("error", {"status": 413, **exc.detail})
         return
-    except Exception as exc:  # noqa: BLE001 — surface any parse failure to the client
-        yield _sse_event(
-            "error", {"status": 400, "message": f"Parse error: {exc}"}
-        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # noqa: BLE001 — surface any parse failure to the client (pyqasm edge cases)
+        yield _sse_event("error", {"status": 400, "message": f"Parse error: {exc}"})
         return
 
     yield _sse_event(
@@ -195,12 +194,7 @@ def analyze_stream(payload: QasmAnalyzeRequest):
 )
 def limits() -> dict:
     """Expose the configured input caps for client-side pre-validation."""
-    return {
-        "max_qasm_bytes": settings.MAX_QASM_BYTES,
-        "max_qubits": settings.MAX_QUBITS,
-        "max_gate_count": settings.MAX_GATE_COUNT,
-        "max_circuit_depth": settings.MAX_CIRCUIT_DEPTH,
-    }
+    return input_limits()
 
 
 @router.get(
