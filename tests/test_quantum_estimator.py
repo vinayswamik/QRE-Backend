@@ -605,3 +605,31 @@ class TestCustomVendors:
         before = set(est.vendors)
         est.estimate(BELL_STATE, custom_vendors={"Transient": _valid_custom_spec()})
         assert set(est.vendors) == before
+
+
+# ---------------------------------------------------------------------------
+# Q# OpenQASM lowering vs pyqasm (chart fields depend on lowering success)
+# ---------------------------------------------------------------------------
+
+OQ3_QELIB1_BELL = """OPENQASM 3.0;
+include "qelib1.inc";
+qreg q[2];
+creg c[2];
+h q[0];
+cx q[0],q[1];
+measure q -> c;
+"""
+
+
+class TestOpenQasmLoweringFailures:
+    """QasmError inherits BaseException; must become per-vendor error results."""
+
+    def test_oq3_with_qelib1_include_reports_error_all_vendors(self):
+        """Q# rejects qelib1.inc under OPENQASM 3; pyqasm still parses."""
+        est = QuantumEstimator()
+        results = est.estimate(OQ3_QELIB1_BELL)
+        assert len(results) > 0
+        for _, r in results.items():
+            assert r["status"] == "error"
+            detail = r.get("detail", "")
+            assert "qelib1" in detail.lower() or "includenotinlanguageversion" in detail.lower()

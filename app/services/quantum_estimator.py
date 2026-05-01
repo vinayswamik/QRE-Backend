@@ -50,7 +50,7 @@ from typing import Any, Iterator
 import pyqasm
 from qsharp.estimator import EstimatorParams
 from qsharp.estimator._estimator import EstimatorError
-from qsharp.openqasm import estimate as _qsharp_estimate
+from qsharp.openqasm import QasmError, estimate as _qsharp_estimate
 
 _VENDORS_FILE = Path(__file__).resolve().parent.parent / "core" / "vendors.json"
 
@@ -398,6 +398,14 @@ class QuantumEstimator:
                 **base,
                 "status": "error",
                 "detail": exc.message or "Azure QRE rejected this circuit.",
+            }
+        except QasmError as exc:
+            # Native Q#/OpenQASM lowering failures (inherits BaseException).
+            detail = str(exc).strip()
+            return {
+                **base,
+                "status": "error",
+                "detail": detail or "OpenQASM could not be lowered for estimation.",
             }
         except (RuntimeError, ValueError, OSError) as exc:
             msg = str(exc)
